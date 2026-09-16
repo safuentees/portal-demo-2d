@@ -4,9 +4,10 @@ import simd
 struct ObjectPlacement {
     var position: SIMD3<Float> = .zero
     var scale = SIMD3<Float>(repeating: 1)
+    var angle: Float = .zero
 
     var modelMatrix: simd_float4x4 {
         // Row vectors: resize around the mesh origin, then move into place.
-        Transforms.scaling(scale) * Transforms.translation(position)
+        Transforms.scaling(scale) * Transforms.rotation(angle) * Transforms.translation(position)
     }
 }

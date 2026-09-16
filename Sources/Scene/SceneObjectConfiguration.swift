@@ -5,6 +5,7 @@ enum SceneObjectID: Hashable {
     case bottomBar
     case topBar
     case circle
+    case cone
     case custom(String)
 }
 
@@ -13,6 +14,7 @@ struct SceneObjectConfiguration {
     enum Geometry {
         case square
         case circle
+        case triangle
     }
 
     let id: SceneObjectID

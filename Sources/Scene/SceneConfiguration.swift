@@ -47,6 +47,14 @@ enum SceneConfiguration {
                 scale: SIMD3(circleScale, circleScale, 1)
             ),
             color: objectColor
+        ), SceneObjectConfiguration(
+            id: .cone,
+            geometry: .triangle,
+            placement: ObjectPlacement(
+                position: SIMD3(0, 0, 0),
+                scale: SIMD3(1, 1, 1)
+            ),
+            color: objectColor
         ),
     ]
 

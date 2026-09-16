@@ -50,6 +50,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         let squareMesh = try SquareMesh.make(device: device)
         let circleMesh = try CircleMesh.make(device: device)
+        let triangleMesh = try TriangleMesh.make(device: device)
 
         // Share geometry within each shape; every object owns its ID and placement.
         objects = sceneObjects.map { configuration in
@@ -57,7 +58,9 @@ final class Renderer: NSObject, MTKViewDelegate {
             switch configuration.geometry {
             case .square: mesh = squareMesh
             case .circle: mesh = circleMesh
+            case .triangle: mesh = triangleMesh
             }
+            
             return RenderObject(
                 id: configuration.id,
                 mesh: mesh,
@@ -160,9 +163,18 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Scene behavior belongs here, after input is read and before the GPU draws it.
     func updateScene() {
         guard let mousePosition else { return }
-        updateObject(.circle) { object in
-            object.placement.position.x = mousePosition.x
-            object.placement.position.y = mousePosition.y
+        let direction = simd_normalize(mousePosition)
+        let a = atan2(direction.y, direction.x)
+        
+        let rot2d = simd_float4x4(columns: (
+            SIMD4<Float>(cos(a), -sin(a), 0, 0), // Column 0
+            SIMD4<Float>(sin(a), cos(a), 0, 0), // Column 1
+            SIMD4<Float>(0, 0, 1, 0), // Column 2
+            SIMD4<Float>(0, 0, 0, 1)  // Column 3
+        ))
+
+        updateObject(.cone) { object in
+            object.modelMatrix = object.modelMatrix * rot2d
         }
     }
 
