@@ -25,9 +25,12 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
     private let depthState: MTLDepthStencilState
+    private let translucentDepthState: MTLDepthStencilState
     private let camera = Camera()
     private var lastFrameTime: CFTimeInterval?
     private var movementDirection = SIMD2<Float>.zero
+    private var lastAimRevision: UInt64 = 0
+    private var pendingAimPosition: SIMD2<Float>?
 
     /// Latest cursor position in scene coordinates, ready to compare with ObjectPlacement.position.
     private(set) var mousePosition: SIMD2<Float>?
@@ -91,6 +94,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         pipeline.fragmentFunction = fragment
         pipeline.vertexDescriptor = vertexDescriptor
         pipeline.colorAttachments[0].pixelFormat = view.colorPixelFormat
+        let colorAttachment = pipeline.colorAttachments[0]!
+        colorAttachment.isBlendingEnabled = true
+        colorAttachment.sourceRGBBlendFactor = .sourceAlpha
+        colorAttachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+        colorAttachment.sourceAlphaBlendFactor = .one
+        colorAttachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
         pipeline.depthAttachmentPixelFormat = view.depthStencilPixelFormat
         pipeline.rasterSampleCount = view.sampleCount
         pipelineState = try device.makeRenderPipelineState(descriptor: pipeline)
@@ -103,6 +112,14 @@ final class Renderer: NSObject, MTKViewDelegate {
             throw SetupError.missingDepthState
         }
         depthState = state
+        let translucentDepth = MTLDepthStencilDescriptor()
+        translucentDepth.label = "Vision depth test without depth writes"
+        translucentDepth.depthCompareFunction = .less
+        translucentDepth.isDepthWriteEnabled = false
+        guard let translucentState = device.makeDepthStencilState(descriptor: translucentDepth) else {
+            throw SetupError.missingDepthState
+        }
+        translucentDepthState = translucentState
         super.init()
     }
 
@@ -119,6 +136,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         } else {
             movementDirection = .zero
             mousePosition = nil
+            pendingAimPosition = nil
         }
         updateScene(deltaTime: deltaTime)
 
@@ -144,6 +162,14 @@ final class Renderer: NSObject, MTKViewDelegate {
         mousePosition = view.mouseCanvasPosition.map { position in
             position + SIMD2(camera.position.x, camera.position.y)
         }
+        if let aimPosition = view.aimCanvasPosition {
+            if view.aimRevision != lastAimRevision {
+                pendingAimPosition = aimPosition + SIMD2(camera.position.x, camera.position.y)
+            }
+        } else {
+            pendingAimPosition = nil
+        }
+        lastAimRevision = view.aimRevision
     }
 
     /// Read an object's current state by name. RenderObject is a value, so this returns a copy.
@@ -176,13 +202,14 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
         }
 
-        // Aim after moving, so the flat end faces the mouse from its new position.
-        guard let mousePosition else { return }
+        // Consume one intentional pointer update. Walking alone keeps the current heading.
+        guard let aimPosition = pendingAimPosition else { return }
+        pendingAimPosition = nil
         updateObject(.cone) { object in
             let position = object.placement.position
-            let direction = mousePosition - SIMD2(position.x, position.y)
-            // There is no direction when the cursor is exactly on the pivot.
-            guard simd_length_squared(direction) > 0 else { return }
+            let direction = aimPosition - SIMD2(position.x, position.y)
+            let deadZone = SceneConfiguration.lookDeadZoneRadius
+            guard simd_length_squared(direction) > deadZone * deadZone else { return }
             // atan2 measures from +X; the mesh's flat edge faces local +Y.
             object.placement.angle = atan2(direction.y, direction.x) - .pi / 2
         }
@@ -203,7 +230,6 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         encoder.label = "Draw all objects"
         encoder.setRenderPipelineState(pipelineState)
-        encoder.setDepthStencilState(depthState)
 
         // Use view points for padding; drawable pixels may be doubled on Retina.
         // Offscreen callers default to one pixel per point unless they supply a viewport.
@@ -213,7 +239,13 @@ final class Renderer: NSObject, MTKViewDelegate {
             padding: Float(SceneConfiguration.canvasPadding)
         )
 
-        for object in objects {
+        // Solid objects establish depth first. Blend translucent fields back to front.
+        let opaqueObjects = objects.filter { $0.color.w >= 1 }
+        let translucentObjects = objects.filter { $0.color.w < 1 }.sorted {
+            $0.placement.position.z > $1.placement.position.z
+        }
+        for object in opaqueObjects + translucentObjects {
+            encoder.setDepthStencilState(object.color.w >= 1 ? depthState : translucentDepthState)
             // 1. Select this object's geometry.
             let vertexBuffer = object.mesh.vertexBuffers[0]
 

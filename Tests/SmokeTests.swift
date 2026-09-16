@@ -125,6 +125,7 @@ struct SmokeTests {
         let tiny = try render(renderer, device: device, queue: queue, width: 128, height: 128)
         try checkPixels(tiny, width: 128, height: 128, placements: [])
         try checkMixedScene(view: view, library: library, device: device, queue: queue)
+        try checkAlphaCompositing(view: view, library: library, device: device, queue: queue)
         print("PASS: empty scene, excessive padding, transform order, placement edits, camera movement, uniform layout")
     }
 
@@ -317,7 +318,11 @@ struct SmokeTests {
 
         let point = CGPoint(x: view.bounds.midX + 100, y: view.bounds.midY - 50)
         let moved = try event(.mouseMoved, at: point)
+        let beforeMove = view.aimRevision
         view.mouseMoved(with: moved)
+        try expect(view.aimRevision == beforeMove + 1, "A changed mouse position must create one aim revision.")
+        view.mouseMoved(with: moved)
+        try expect(view.aimRevision == beforeMove + 1, "Repeated events at the same position must not retarget aim.")
         try expect(view.mousePosition == point, "Mouse events must convert window locations into native view points.")
         try expect(view.mouseCanvasPosition == SIMD2<Float>(0.5, -0.25),
                    "Mouse mapping must account for bounds origin and use logical points, not Retina drawable pixels.")
@@ -409,6 +414,13 @@ struct SmokeTests {
                    "A pointer exactly at the cone origin must preserve the previous angle.")
         view.mouseDown(with: try event(.leftMouseDown, at: point))
         try expect(view.mousePosition == point, "A mouse click must update position before the next move.")
+        let beforeClick = view.aimRevision
+        view.mouseDown(with: try event(.leftMouseDown, at: point))
+        try expect(view.aimRevision == beforeClick + 1, "An explicit click must retarget even at the same position.")
+        renderer.updateInput(from: view)
+        renderer.updateScene()
+        try expect(abs((renderer.object(withID: .cone)?.placement.angle ?? 0) - rightwardAngle) < 0.0001,
+                   "A click must apply a fresh aim target immediately.")
         let padding = CGPoint(x: view.bounds.minX + 50, y: view.bounds.midY)
         view.mouseMoved(with: try event(.mouseMoved, at: padding))
         try expect(view.mouseCanvasPosition == SIMD2<Float>(-2, 0),
@@ -425,10 +437,21 @@ struct SmokeTests {
                    "Leaving the view must clear input and renderer mouse positions.")
         try expect(renderer.object(withID: .cone)?.placement.angle == lastAngle,
                    "When mouse input becomes unavailable, the cone must hold its last angle.")
+        let beforeEntry = view.aimRevision
         view.mouseEntered(with: try event(.mouseEntered, at: point))
         try expect(view.mousePosition == point, "Reentering the view must restore the current mouse location.")
+        renderer.updateInput(from: view)
+        renderer.updateScene()
+        try expect(view.aimRevision == beforeEntry && renderer.object(withID: .cone)?.placement.angle == lastAngle,
+                   "Entering the view must refresh cursor state without changing the heading.")
         NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
         try expect(view.mousePosition == nil, "Window resignation must clear stale mouse input.")
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
+        view.updateTrackingAreas()
+        renderer.updateInput(from: view)
+        renderer.updateScene()
+        try expect(view.aimRevision == beforeEntry && renderer.object(withID: .cone)?.placement.angle == lastAngle,
+                   "Focus and tracking refreshes must not create an aim request.")
         view.mouseMoved(with: moved)
         let outside = CGPoint(x: view.bounds.maxX + 1, y: view.bounds.midY)
         view.mouseDragged(with: try event(.leftMouseDragged, at: outside))
@@ -436,6 +459,55 @@ struct SmokeTests {
         view.setFrameSize(CGSize(width: 128, height: 128))
         view.mouseMoved(with: try event(.mouseMoved, at: CGPoint(x: view.bounds.midX, y: view.bounds.midY)))
         try expect(view.mouseCanvasPosition == nil, "Collapsed canvases must not expose mouse canvas coordinates.")
+        renderer.updateInput(from: view)
+        renderer.updateScene()
+        let beforeRestore = view.aimRevision
+        view.setFrameSize(CGSize(width: 900, height: 600))
+        view.mouseEntered(with: try event(.mouseEntered, at: point))
+        renderer.updateInput(from: view)
+        renderer.updateScene()
+        try expect(view.aimRevision == beforeRestore && renderer.object(withID: .cone)?.placement.angle == lastAngle,
+                   "An invalid aim event must be consumed rather than deferred until the canvas is restored.")
+
+        func expectCancelledAim(_ message: String) throws {
+            renderer.updateInput(from: view)
+            renderer.updateScene()
+            try expect(view.aimCanvasPosition == nil && renderer.object(withID: .cone)?.placement.angle == lastAngle,
+                       message)
+        }
+        let queuedPoint = CGPoint(x: view.bounds.midX - 100, y: view.bounds.midY + 50)
+        view.mouseMoved(with: try event(.mouseMoved, at: queuedPoint))
+        view.mouseExited(with: try event(.mouseExited, at: queuedPoint))
+        view.mouseEntered(with: try event(.mouseEntered, at: queuedPoint))
+        try expectCancelledAim("Exiting and reentering before input is read must not replay an old aim revision.")
+
+        view.mouseMoved(with: try event(.mouseMoved, at: point))
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
+        view.mouseEntered(with: try event(.mouseEntered, at: point))
+        try expectCancelledAim("Regaining focus must not replay an aim event that was never consumed.")
+
+        view.mouseMoved(with: try event(.mouseMoved, at: queuedPoint))
+        view.updateTrackingAreas()
+        view.mouseEntered(with: try event(.mouseEntered, at: queuedPoint))
+        try expectCancelledAim("A passive tracking refresh must invalidate an unconsumed aim event.")
+
+        view.mouseMoved(with: try event(.mouseMoved, at: point))
+        renderer.updateInput(from: view)
+        view.mouseExited(with: try event(.mouseExited, at: point))
+        view.mouseEntered(with: try event(.mouseEntered, at: point))
+        try expectCancelledAim("Reading invalidated input must clear aim already queued in the renderer.")
+
+        view.mouseMoved(with: try event(.mouseMoved, at: queuedPoint))
+        _ = window.makeFirstResponder(nil)
+        _ = window.makeFirstResponder(view)
+        try expectCancelledAim("First-responder focus changes must discard unconsumed aim intent.")
+        view.mouseMoved(with: try event(.mouseMoved, at: point))
+        renderer.updateInput(from: view)
+        renderer.updateScene()
+        try expect(view.aimCanvasPosition != nil
+                   && abs((renderer.object(withID: .cone)?.placement.angle ?? 0) - rightwardAngle) < 0.0001,
+                   "Fresh intentional movement must still retarget after passive invalidation.")
         view.removeFromSuperview()
         try expect(view.mousePosition == nil && view.mouseCanvasPosition == nil,
                    "Detaching the view must clear mouse input.")
@@ -474,6 +546,18 @@ struct SmokeTests {
         }
         func renderer() throws -> Renderer {
             try Renderer(view: view, library: library, sceneObjects: namedScene)
+        }
+        func mouseEvent(_ type: NSEvent.EventType, at position: SIMD2<Float>) throws -> NSEvent {
+            let side = min(view.bounds.width, view.bounds.height) - 2 * SceneConfiguration.canvasPadding
+            let point = CGPoint(
+                x: view.bounds.midX + CGFloat(position.x) * side / 2,
+                y: view.bounds.midY + CGFloat(position.y) * side / 2
+            )
+            guard let event = NSEvent.mouseEvent(
+                with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0
+            ) else { throw Failure(description: "Could not construct a movement/aiming mouse event.") }
+            return event
         }
         func expectMovement(_ renderer: Renderer, displacement: SIMD2<Float>) throws {
             for configuration in namedScene {
@@ -553,21 +637,33 @@ struct SmokeTests {
         diagonal.updateScene(deltaTime: 0.1)
         try expectMovement(diagonal, displacement: diagonalStep)
 
-        guard let mouse = NSEvent.mouseEvent(
-            with: .mouseMoved, location: view.convert(CGPoint(x: 550, y: 250), to: nil),
-            modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
-            eventNumber: 0, clickCount: 1, pressure: 0
-        ) else { throw Failure(description: "Could not construct a movement/aiming mouse event.") }
+        let mouse = try mouseEvent(.mouseMoved, at: [0.5, -0.25])
         view.mouseMoved(with: mouse)
-        view.keyDown(with: try keyEvent("w", code: 13))
         let aimed = try renderer()
         aimed.updateInput(from: view)
+        aimed.updateScene()
+        let heldAngle = aimed.object(withID: .cone)?.placement.angle
+        try expect(abs((heldAngle ?? 0) + .pi / 2) < 0.0001, "A fresh pointer move must set the heading.")
+        view.keyDown(with: try keyEvent("w", code: 13))
+        aimed.updateInput(from: view)
         aimed.updateScene(deltaTime: 0.1)
-        let step = speed * 0.1
+        try expectMovement(aimed, displacement: [0, speed * 0.1])
+        try expect(aimed.object(withID: .cone)?.placement.angle == heldAngle,
+                   "WASD under a stationary pointer must preserve the heading.")
+        let stationaryRevision = view.aimRevision
+        view.mouseMoved(with: mouse)
+        aimed.updateInput(from: view)
+        aimed.updateScene()
+        try expect(view.aimRevision == stationaryRevision && aimed.object(withID: .cone)?.placement.angle == heldAngle,
+                   "A same-position mouse event must not undo the held heading after movement.")
+        view.mouseDown(with: try mouseEvent(.leftMouseDown, at: [0.5, -0.25]))
+        aimed.updateInput(from: view)
+        aimed.updateScene(deltaTime: 0.02)
+        let step = speed * 0.12
         try expectMovement(aimed, displacement: [0, step])
         let expectedAngle = atan2(-step, Float(0.25)) - .pi / 2
         try expect(abs((aimed.object(withID: .cone)?.placement.angle ?? 0) - expectedAngle) < 0.0001,
-                   "The cone must aim at the pointer from its new position after movement.")
+                   "A fresh click must aim from the new position after that frame's movement.")
         aimed.updateInput(from: view)
         try expect(aimed.mousePosition == SIMD2<Float>(0.5, -0.25),
                    "WASD must move objects without moving the camera or mouse scene coordinates.")
@@ -585,13 +681,31 @@ struct SmokeTests {
         let pixels = try render(aimed, device: device, queue: queue, width: 900, height: 600)
         try checkPixels(pixels, width: 900, height: 600, placements: squares,
                         circlePlacements: circles, trianglePlacements: triangles)
+        view.mouseMoved(with: try mouseEvent(.mouseMoved, at: [-0.5, -0.5]))
+        aimed.updateInput(from: view)
         let plainView = MTKView(frame: .zero, device: device)
         plainView.drawableSize = .zero
         aimed.draw(in: plainView)
         aimed.updateScene(deltaTime: 0.1)
         try expectMovement(aimed, displacement: [0, step])
         try expect(aimed.mousePosition == nil, "Drawing a non-input view must clear stale input.")
-        print("PASS: held WASD, focus/release cleanup, shared XY movement, frame timing, fixed camera, aiming after movement")
+        try expect(abs((aimed.object(withID: .cone)?.placement.angle ?? 0) - expectedAngle) < 0.0001,
+                   "A non-input view must discard a pending aim request before it can change heading.")
+        view.keyUp(with: try keyEvent("w", code: 13, type: .keyUp))
+        let rejected = try renderer()
+        view.mouseMoved(with: try mouseEvent(.mouseMoved, at: [0.25 + SceneConfiguration.lookDeadZoneRadius / 2, -0.25]))
+        rejected.updateInput(from: view)
+        rejected.updateScene()
+        try expect(rejected.object(withID: .cone)?.placement.angle == 0.37,
+                   "Pointer events inside the look dead zone must preserve the current heading.")
+        rejected.updateObject(.cone) { object in
+            object.placement.position.y += SceneConfiguration.lookDeadZoneRadius * 2 + 0.1
+        }
+        rejected.updateInput(from: view)
+        rejected.updateScene()
+        try expect(rejected.object(withID: .cone)?.placement.angle == 0.37,
+                   "A rejected dead-zone event must never activate later when the object moves away.")
+        print("PASS: held WASD, shared XY movement, fixed camera, one-shot aiming, stationary heading, consumed dead zone")
     }
 
     @MainActor
@@ -749,6 +863,74 @@ struct SmokeTests {
             )
         }
         print("PASS: mixed bars and solid circle, filled center, clean outer boundary including Retina")
+    }
+
+    @MainActor
+    static func checkAlphaCompositing(
+        view: MTKView, library: MTLLibrary, device: MTLDevice, queue: MTLCommandQueue
+    ) throws {
+        let visionColor = SIMD4<Float>(0.8, 0.4, 0.2, 0.25)
+        let playerColor = SIMD4<Float>(0.2, 0.7, 1, 1)
+        let portalColor = SIMD4<Float>(0.9, 0.7, 0.1, 1)
+        let backdropColor = SIMD4<Float>(0.7, 0.2, 0.8, 1)
+        let farColor = SIMD4<Float>(0.2, 1, 0.3, 0.4)
+        let objects = [
+            SceneObjectConfiguration(
+                id: .custom("vision"), geometry: .triangle,
+                placement: ObjectPlacement(position: [0, -0.6, 0.5], scale: [1.2, 1.2, 1]), color: visionColor
+            ),
+            SceneObjectConfiguration(
+                id: .custom("player"), geometry: .circle,
+                placement: ObjectPlacement(position: [-0.15, 0, 0], scale: [0.07, 0.07, 1]), color: playerColor
+            ),
+            SceneObjectConfiguration(
+                id: .custom("portal"), geometry: .square,
+                placement: ObjectPlacement(position: [0.22, 0.3, 0.1], scale: [0.15, 0.15, 1]), color: portalColor
+            ),
+            SceneObjectConfiguration(
+                id: .custom("opaque-backdrop"), geometry: .square,
+                placement: ObjectPlacement(position: [-0.2, 0.4, 0.9], scale: [0.15, 0.15, 1]), color: backdropColor
+            ),
+            SceneObjectConfiguration(
+                id: .custom("far-tint"), geometry: .square,
+                placement: ObjectPlacement(position: [0, 0.1, 0.7], scale: [0.25, 0.25, 1]), color: farColor
+            ),
+        ]
+        let clear = SceneConfiguration.backgroundColor
+        let background = SIMD4<Float>(Float(clear.red), Float(clear.green), Float(clear.blue), Float(clear.alpha))
+        func over(_ foreground: SIMD4<Float>, _ background: SIMD4<Float>) -> SIMD4<Float> {
+            var result = foreground * foreground.w + background * (1 - foreground.w)
+            result.w = foreground.w + background.w * (1 - foreground.w)
+            return result
+        }
+        let samples: [(SIMD2<Float>, SIMD4<Float>, String)] = [
+            ([0.8, -0.8], background, "untouched background"),
+            ([0, 0.45], over(visionColor, background), "vision over background"),
+            ([-0.15, 0], playerColor, "opaque foreground player"),
+            ([0.22, 0.3], portalColor, "opaque foreground portal"),
+            ([-0.2, 0.4], over(visionColor, backdropColor), "vision over opaque backdrop"),
+            ([0, 0.1], over(visionColor, over(farColor, background)), "transparent layers back to front"),
+        ]
+        let orders = [objects, Array(objects.reversed()), Array(objects.dropFirst()) + [objects[0]]]
+        var previous: [UInt8]?
+        let size = 512
+        let halfCanvas = (CGFloat(size) - 2 * SceneConfiguration.canvasPadding) / 2
+        for order in orders {
+            let renderer = try Renderer(view: view, library: library, sceneObjects: order)
+            let pixels = try render(renderer, device: device, queue: queue, width: size, height: size)
+            for (position, color, description) in samples {
+                let x = Int(CGFloat(size) / 2 + CGFloat(position.x) * halfCanvas)
+                let y = Int(CGFloat(size) / 2 - CGFloat(position.y) * halfCanvas)
+                let expected = [color.z, color.y, color.x, color.w].map { Int(($0 * 255).rounded()) }
+                try expect((0..<4).allSatisfy { abs(Int(pixels[(y * size + x) * 4 + $0]) - expected[$0]) <= 2 },
+                           "Incorrect straight-alpha composite for \(description).")
+            }
+            if let previous {
+                try expect(pixels == previous, "Scene order must not change depth-correct alpha compositing.")
+            }
+            previous = pixels
+        }
+        print("PASS: straight-alpha vision, readable opaque player/portal, transparent depth order, reordered scenes")
     }
 
     static func render(

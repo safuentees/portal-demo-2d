@@ -8,7 +8,16 @@ final class KeyboardMetalView: MTKView {
     private var mouseTrackingArea: NSTrackingArea?
 
     /// Cursor location in this view's coordinates (macOS points), or nil when unavailable.
-    private(set) var mousePosition: CGPoint?
+    private(set) var mousePosition: CGPoint? {
+        didSet {
+            if mousePosition == nil { aimCanvasPosition = nil }
+        }
+    }
+
+    /// Changes only when the user moves/drags the pointer or explicitly clicks to aim.
+    private(set) var aimRevision: UInt64 = 0
+    /// The latest intentional target, invalidated when focus, tracking, or coordinates change.
+    private(set) var aimCanvasPosition: SIMD2<Float>?
 
     /// Cursor relative to the centered square canvas: (0, 0) at center, +y upward.
     var mouseCanvasPosition: SIMD2<Float>? {
@@ -25,6 +34,11 @@ final class KeyboardMetalView: MTKView {
     }
 
     override var acceptsFirstResponder: Bool { true }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .crosshair)
+    }
 
     /// Held WASD keys in the scene's XY plane: W is up, D is right.
     var movementDirection: SIMD2<Float> {
@@ -87,11 +101,12 @@ final class KeyboardMetalView: MTKView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        aimCanvasPosition = nil
         updateMousePosition(inWindow: event.locationInWindow)
     }
 
     override func mouseMoved(with event: NSEvent) {
-        updateMousePosition(inWindow: event.locationInWindow)
+        recordAimInput(with: event)
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -99,20 +114,20 @@ final class KeyboardMetalView: MTKView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        updateMousePosition(inWindow: event.locationInWindow)
+        recordAimInput(with: event)
     }
 
     override func rightMouseDragged(with event: NSEvent) {
-        updateMousePosition(inWindow: event.locationInWindow)
+        recordAimInput(with: event)
     }
 
     override func otherMouseDragged(with event: NSEvent) {
-        updateMousePosition(inWindow: event.locationInWindow)
+        recordAimInput(with: event)
     }
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        updateMousePosition(inWindow: event.locationInWindow)
+        recordAimInput(with: event, force: true)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -135,6 +150,7 @@ final class KeyboardMetalView: MTKView {
 
     override func resignFirstResponder() -> Bool {
         pressedKeys.removeAll()
+        aimCanvasPosition = nil
         return super.resignFirstResponder()
     }
 
@@ -149,11 +165,21 @@ final class KeyboardMetalView: MTKView {
     }
 
     private func refreshMousePosition() {
+        aimCanvasPosition = nil
         guard let window, window.isKeyWindow else {
             mousePosition = nil
             return
         }
         updateMousePosition(inWindow: window.mouseLocationOutsideOfEventStream)
+    }
+
+    private func recordAimInput(with event: NSEvent, force: Bool = false) {
+        let previousPosition = mousePosition
+        updateMousePosition(inWindow: event.locationInWindow)
+        if mousePosition != nil && (force || mousePosition != previousPosition) {
+            aimCanvasPosition = mouseCanvasPosition
+            aimRevision &+= 1
+        }
     }
 
     private func updateMousePosition(inWindow location: CGPoint) {

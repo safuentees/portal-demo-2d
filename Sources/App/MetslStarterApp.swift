@@ -9,10 +9,33 @@ struct MetslStarterApp: App {
                     minWidth: SceneConfiguration.minimumCanvasSide + 2 * SceneConfiguration.canvasPadding,
                     minHeight: SceneConfiguration.minimumCanvasSide + 2 * SceneConfiguration.canvasPadding
                 )
+                .overlay(alignment: .bottom) {
+                    controlsHint
+                }
         }
         .defaultSize(
             width: SceneConfiguration.initialCanvasSide + 2 * SceneConfiguration.canvasPadding,
             height: SceneConfiguration.initialCanvasSide + 2 * SceneConfiguration.canvasPadding
         )
+    }
+
+    private var controlsHint: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 24) {
+                Text("WASD").fontWeight(.semibold) + Text("  Move")
+                Text("Mouse").fontWeight(.semibold) + Text("  Look")
+            }
+            .font(.system(size: 13))
+            .foregroundStyle(.white.opacity(0.9))
+
+            Text("Move without changing your view. Click the canvas to focus.")
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.65))
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 24)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
     }
 }
