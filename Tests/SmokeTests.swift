@@ -314,6 +314,9 @@ struct SmokeTests {
         try expect(view.mouseCanvasPosition == SIMD2<Float>(0.5, -0.25),
                    "Mouse mapping must account for bounds origin and use logical points, not Retina drawable pixels.")
         let renderer = try Renderer(view: view, library: library, sceneObjects: namedScene)
+        let rotationOffset = SceneConfiguration.coneRotationOffset
+        let rightwardAngle = -Float.pi / 2 + rotationOffset
+        let diagonalAngle = Float.pi / 4 + rotationOffset
         renderer.updateScene()
         try expect(renderer.object(withID: .cone)?.placement.angle == 0.37,
                    "A scene without mouse input must retain its configured cone angle.")
@@ -321,14 +324,27 @@ struct SmokeTests {
         renderer.draw(in: view)
         view.drawableSize = CGSize(width: 1800, height: 1200)
         try expect(renderer.mousePosition == SIMD2<Float>(0.5, -0.25)
-                   && abs((renderer.object(withID: .cone)?.placement.angle ?? 0) + .pi / 2) < 0.0001,
+                   && abs((renderer.object(withID: .cone)?.placement.angle ?? 0) - rightwardAngle) < 0.0001,
                    "The draw loop must read input and update the scene before checking drawable availability.")
         renderer.updateInput(from: view, deltaTime: 0)
         try expect(renderer.mousePosition == view.mouseCanvasPosition,
                    "The renderer must consume the input view's canvas position at rest.")
         for _ in 0..<3 { renderer.updateScene() }
-        try expect(abs((renderer.object(withID: .cone)?.placement.angle ?? 0) + .pi / 2) < 0.0001,
-                   "The cone must aim from its translated origin without accumulating rotation each frame.")
+        try expect(abs((renderer.object(withID: .cone)?.placement.angle ?? 0) - rightwardAngle) < 0.0001,
+                   "The cone must retain its configured offset without accumulating rotation each frame.")
+        guard let cone = renderer.object(withID: .cone) else {
+            throw Failure(description: "The cone fixture is missing.")
+        }
+        let tip = SIMD4<Float>(0, 1, 0, 1) * cone.modelMatrix
+        let origin = cone.placement.position
+        let tipDirection = simd_normalize(SIMD2<Float>(tip.x - origin.x, tip.y - origin.y))
+        let mouseDirection = simd_normalize(SIMD2<Float>(0.5 - origin.x, -0.25 - origin.y))
+        let expectedDirection = SIMD2<Float>(
+            mouseDirection.x * cos(rotationOffset) - mouseDirection.y * sin(rotationOffset),
+            mouseDirection.x * sin(rotationOffset) + mouseDirection.y * cos(rotationOffset)
+        )
+        try expect(simd_distance(tipDirection, expectedDirection) < 0.0001,
+                   "The cone's tip must apply the configured offset to its mouse heading; pi reverses its direction.")
         for configuration in namedScene {
             try expect(renderer.object(withID: configuration.id)?.placement.position == configuration.placement.position
                        && renderer.object(withID: configuration.id)?.placement.scale == configuration.placement.scale
@@ -344,7 +360,7 @@ struct SmokeTests {
         var expectedTriangles: [ObjectPlacement] = []
         for configuration in namedScene {
             var placement = configuration.placement
-            if configuration.id == .cone { placement.angle = -.pi / 2 }
+            if configuration.id == .cone { placement.angle = rightwardAngle }
             switch configuration.geometry {
             case .square: expectedSquares.append(placement)
             case .circle: expectedCircles.append(placement)
@@ -370,10 +386,10 @@ struct SmokeTests {
                        "Every mouse drag callback must update the stored position.")
             renderer.updateInput(from: view, deltaTime: 0)
             renderer.updateScene()
-            try expect(abs((renderer.object(withID: .cone)?.placement.angle ?? 0) - .pi / 4) < 0.0001,
-                       "Dragging toward the canvas center must aim from the cone's translated origin.")
+            try expect(abs((renderer.object(withID: .cone)?.placement.angle ?? 0) - diagonalAngle) < 0.0001,
+                       "Dragging must retain the configured offset around the cone's translated origin.")
         }
-        expectedTriangles[0].angle = .pi / 4
+        expectedTriangles[0].angle = diagonalAngle
         let diagonalPixels = try render(renderer, device: device, queue: queue, width: 900, height: 600)
         try checkPixels(
             diagonalPixels, width: 900, height: 600,
@@ -383,7 +399,7 @@ struct SmokeTests {
         view.mouseMoved(with: try event(.mouseMoved, at: pivot))
         renderer.updateInput(from: view, deltaTime: 0)
         renderer.updateScene()
-        try expect(abs((renderer.object(withID: .cone)?.placement.angle ?? 0) - .pi / 4) < 0.0001,
+        try expect(abs((renderer.object(withID: .cone)?.placement.angle ?? 0) - diagonalAngle) < 0.0001,
                    "A pointer exactly at the cone origin must preserve the previous angle.")
         view.mouseDown(with: try event(.leftMouseDown, at: point))
         try expect(view.mousePosition == point, "A mouse click must update position before the next move.")
@@ -394,7 +410,7 @@ struct SmokeTests {
         renderer.updateInput(from: view, deltaTime: 0)
         renderer.updateScene()
         let lastAngle = renderer.object(withID: .cone)?.placement.angle
-        let paddingAngle = atan2(Float(0.25), Float(-2.25)) - .pi / 2
+        let paddingAngle = atan2(Float(0.25), Float(-2.25)) - .pi / 2 + rotationOffset
         try expect(abs((lastAngle ?? 0) - paddingAngle) < 0.0001, "Cone aiming must not clamp input in padding.")
         view.mouseExited(with: try event(.mouseExited, at: padding))
         renderer.updateInput(from: view, deltaTime: 0)
@@ -424,6 +440,11 @@ struct SmokeTests {
 
     @MainActor
     static func checkNamedObjects(view: MTKView, library: MTLLibrary) throws {
+        guard let initialCone = SceneConfiguration.objects.first(where: { $0.id == .cone }) else {
+            throw Failure(description: "The default scene must contain its named cone.")
+        }
+        try expect(initialCone.placement.angle == SceneConfiguration.coneRotationOffset,
+                   "The default cone must start with its configured rotation offset before mouse input.")
         for configurations in [namedScene, Array(namedScene.reversed())] {
             let renderer = try Renderer(view: view, library: library, sceneObjects: configurations)
             try expect(renderer.object(withID: .circle)?.id == .circle,

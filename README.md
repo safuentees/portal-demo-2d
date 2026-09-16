@@ -1,6 +1,6 @@
 # Metsl Starter
 
-A ready-to-run macOS Metal project based on `metsl-macOS`, with independently positioned and scaled blue squares, a solid circle, and a triangle that aims toward the mouse on a dark background. The window, camera controls, GPU setup, and shaders are already wired together; sphere geometry is also available for experiments.
+A ready-to-run macOS Metal project based on `metsl-macOS`, with independently positioned and scaled blue squares, a solid circle, and a triangle whose rotation follows the mouse on a dark background. The window, camera controls, GPU setup, and shaders are already wired together; sphere geometry is also available for experiments.
 
 ## Version and repository
 
@@ -65,7 +65,7 @@ Add or remove entries to change the object count. Use the named IDs `.bottomBar`
 
 Edit the `.circle` entry to set the solid circle's position and scale; `circleScale` is currently `0.1`. The circle mesh has radius 1, so scale `(1, 1, 1)` fills the canvas diameter and `(0.5, 0.5, 1)` makes it half as wide. Different x/y scales make an ellipse. `circleSegments` controls edge smoothness (64 by default). The mesh includes a center vertex and a ring of rim vertices; every adjacent pair on the rim forms a triangle with the center, including the closing pair. This fills the circle without a hole or an open seam.
 
-The `.cone` uses the flat triangle mesh. Its tip starts along +Y and its pivot is the base midpoint at local `(0, 0)`. Scene updates rotate it around that pivot to face the cursor.
+The `.cone` uses the flat triangle mesh. Its tip starts along +Y and its pivot is the base midpoint at local `(0, 0)`. `SceneConfiguration.coneRotationOffset` adds an extra rotation to its mouse aiming; it is currently `.pi` (180 degrees), so the tip points away from the cursor. This same offset sets its initial angle before mouse input is available. Set the offset to `0` to point toward the cursor.
 
 With the camera at rest, `(0, 0)` is the center of an invisible square canvas, positive x goes right, and positive y goes up. Its edges are at `-1...1` on both axes. For the unit square mesh, scale `(1, 1, 1)` spans half the canvas width and height; `(0.5, 0.5, 1)` spans one quarter. Different x/y scales make rectangles. Object coordinates and proportions stay the same when the window changes shape.
 
@@ -93,7 +93,7 @@ updateObject(.topBar) { object in
 
 `ObjectPlacement` stores an angle in radians. `Transforms.rotation(angle)` builds the matrix, and `ObjectPlacement.modelMatrix` combines `scale * rotation * translation`. Set `placement.angle` to change orientation; the computed `RenderObject.modelMatrix` remains read-only. Positive angles rotate counterclockwise around the local origin. Scale and rotation happen before translation, so rotating an object keeps its pivot at `placement.position`.
 
-Every `draw(in:)` call runs `updateInput → updateScene → encodeFrame`. Put behavior in `updateScene()`; `encodeFrame` draws the resulting state. The existing example aims only `.cone` toward the mouse, preserving its position and scale. If the mouse is unavailable or exactly on the pivot, the cone holds its last angle. Remove that update block if you want to control the cone another way.
+Every `draw(in:)` call runs `updateInput → updateScene → encodeFrame`. Put behavior in `updateScene()`; `encodeFrame` draws the resulting state. The existing example sets only `.cone` to its mouse aiming angle plus the configured offset, preserving its position and scale. If the mouse is unavailable or exactly on the pivot, the cone holds its last angle. Remove that update block if you want to control the cone another way.
 
 ## Mouse position
 
@@ -115,11 +115,12 @@ updateObject(.cone) { object in
     let position = object.placement.position
     let direction = mousePosition - SIMD2(position.x, position.y)
     guard simd_length_squared(direction) > 0 else { return }
-    object.placement.angle = atan2(direction.y, direction.x) - .pi / 2
+    let aimAngle = atan2(direction.y, direction.x) - .pi / 2
+    object.placement.angle = aimAngle + SceneConfiguration.coneRotationOffset
 }
 ```
 
-Subtracting the object's position makes the direction correct even after moving the cone. `atan2` measures from +X; subtracting `pi / 2` accounts for the triangle's upward-pointing tip. Normalization is unnecessary. The result is an absolute angle, so assign it each frame rather than accumulating it.
+Subtracting the object's position makes the direction correct even after moving the cone. `atan2` measures from +X; subtracting `pi / 2` accounts for the triangle's upward-pointing tip. The extra offset belongs in `SceneConfiguration` so it can be edited in one place, and `updateScene()` adds it each time it calculates the angle. Normalization is unnecessary. The result is an absolute angle, so assign it each frame rather than accumulating it.
 
 `private(set)` lets other code read the stored state while the owning type controls updates. The optional `?` means there may be no position: the view clears it when the cursor exits or the window loses focus or detaches. Canvas conversion also returns nil if padding leaves no usable canvas. Input tracking records state; `updateScene()` applies it to objects.
 
