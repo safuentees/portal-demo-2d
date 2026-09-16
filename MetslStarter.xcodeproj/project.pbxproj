@@ -17,6 +17,7 @@
 		000000000000000000000108 /* ShaderUniforms.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000208 /* ShaderUniforms.swift */; };
 		000000000000000000000109 /* Shaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000209 /* Shaders.metal */; };
 		000000000000000000000110 /* ObjectPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000210 /* ObjectPlacement.swift */; };
+		000000000000000000000111 /* SceneObjectConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000211 /* SceneObjectConfiguration.swift */; };
 		72C11EB9305A33A500827F93 /* RenderObject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C11EB8305A33A100827F93 /* RenderObject.swift */; };
 /* End PBXBuildFile section */
 
@@ -32,6 +33,7 @@
 		000000000000000000000208 /* ShaderUniforms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShaderUniforms.swift; sourceTree = "<group>"; };
 		000000000000000000000209 /* Shaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Shaders.metal; sourceTree = "<group>"; };
 		000000000000000000000210 /* ObjectPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectPlacement.swift; sourceTree = "<group>"; };
+		000000000000000000000211 /* SceneObjectConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneObjectConfiguration.swift; sourceTree = "<group>"; };
 		000000000000000000000220 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		000000000000000000000221 /* SmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeTests.swift; sourceTree = "<group>"; };
 		000000000000000000000222 /* check.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = check.sh; sourceTree = "<group>"; };
@@ -113,6 +115,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000203 /* SceneConfiguration.swift */,
+				000000000000000000000211 /* SceneObjectConfiguration.swift */,
 				000000000000000000000210 /* ObjectPlacement.swift */,
 				000000000000000000000204 /* Camera.swift */,
 				000000000000000000000205 /* Transforms.swift */,
@@ -231,6 +234,7 @@
 				000000000000000000000101 /* MetalView.swift in Sources */,
 				000000000000000000000102 /* KeyboardMetalView.swift in Sources */,
 				000000000000000000000103 /* SceneConfiguration.swift in Sources */,
+				000000000000000000000111 /* SceneObjectConfiguration.swift in Sources */,
 				000000000000000000000110 /* ObjectPlacement.swift in Sources */,
 				000000000000000000000104 /* Camera.swift in Sources */,
 				000000000000000000000105 /* Transforms.swift in Sources */,

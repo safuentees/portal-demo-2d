@@ -1,6 +1,6 @@
 # Metsl Starter
 
-A ready-to-run macOS Metal project based on `metsl-macOS`, with independently positioned and scaled blue squares and a solid circle on a pale background. The window, camera controls, GPU setup, and shaders are already wired together; sphere geometry is also available for experiments.
+A ready-to-run macOS Metal project based on `metsl-macOS`, with independently positioned and scaled blue squares and a solid circle on a dark background. The window, camera controls, GPU setup, and shaders are already wired together; sphere geometry is also available for experiments.
 
 ## Version and repository
 
@@ -31,6 +31,7 @@ The project uses SwiftUI, AppKit, MetalKit, Model I/O, and SIMD. There are no ex
 | Change | File |
 | --- | --- |
 | Square/circle positions and scales, circle detail, canvas padding, scene colors | `Sources/Scene/SceneConfiguration.swift` |
+| Object IDs and the initial data for each scene object | `Sources/Scene/SceneObjectConfiguration.swift` |
 | Position/scale data and model transform | `Sources/Scene/ObjectPlacement.swift` |
 | Mesh, placement, and color for one rendered object | `Sources/Rendering/RenderObject.swift` |
 | Vertex transforms or fragment color | `Sources/Shaders/Shaders.metal` |
@@ -45,18 +46,23 @@ The project uses SwiftUI, AppKit, MetalKit, Model I/O, and SIMD. There are no ex
 | View setup, draw rate, renderer lifetime | `Sources/Views/MetalView.swift` |
 | Window title and initial size | `Sources/App/MetslStarterApp.swift` |
 
-Edit `SceneConfiguration.squares` to arrange the scene. Every entry creates one object; its position and scale stay together:
+Edit `SceneConfiguration.objects` to arrange the scene. Every entry creates one object; its ID, shape, position, scale, and color stay together:
 
 ```swift
-ObjectPlacement(
-    position: SIMD3(0.45, 0, 0),
-    scale: SIMD3(0.6, 0.3, 1)
+SceneObjectConfiguration(
+    id: .custom("rightPanel"),
+    geometry: .square,
+    placement: ObjectPlacement(
+        position: SIMD3(0.45, 0, 0),
+        scale: SIMD3(0.6, 0.3, 1)
+    ),
+    color: objectColor
 )
 ```
 
-Add or remove entries to change the object count. The renderer shares one mesh across all squares, and changing one entry's scale does not affect the others. Defaults are position `(0, 0, 0)` and scale `(1, 1, 1)`.
+Add or remove entries to change the object count. Use the named IDs `.bottomBar`, `.topBar`, and `.circle` for the existing objects. For new objects, add a case to `SceneObjectID` or use a unique `.custom("name")`. IDs identify individual objects, independently of their shape or array order; duplicate IDs cause a setup error. The renderer shares one mesh across all objects of the same shape, and changing one entry's scale does not affect the others. Placement defaults are position `(0, 0, 0)` and scale `(1, 1, 1)`.
 
-Edit `SceneConfiguration.circlePlacement` to move or resize the solid circle. The circle mesh has radius 1, so scale `(1, 1, 1)` fills the canvas diameter and `(0.5, 0.5, 1)` makes it half as wide. Different x/y scales make an ellipse. `circleSegments` controls edge smoothness (64 by default). The mesh includes a center vertex and a ring of rim vertices; every adjacent pair on the rim forms a triangle with the center, including the closing pair. This fills the circle without a hole or an open seam.
+Edit the `.circle` entry to set the solid circle's initial position and scale; `circleScale` is currently `0.1`. This object follows the cursor during scene updates. The circle mesh has radius 1, so scale `(1, 1, 1)` fills the canvas diameter and `(0.5, 0.5, 1)` makes it half as wide. Different x/y scales make an ellipse. `circleSegments` controls edge smoothness (64 by default). The mesh includes a center vertex and a ring of rim vertices; every adjacent pair on the rim forms a triangle with the center, including the closing pair. This fills the circle without a hole or an open seam.
 
 With the camera at rest, `(0, 0)` is the center of an invisible square canvas, positive x goes right, and positive y goes up. Its edges are at `-1...1` on both axes. For the unit square mesh, scale `(1, 1, 1)` spans half the canvas width and height; `(0.5, 0.5, 1)` spans one quarter. Different x/y scales make rectangles. Object coordinates and proportions stay the same when the window changes shape.
 
@@ -66,7 +72,22 @@ The canvas side is `max(min(windowWidth, windowHeight) - 2 * padding, 0)`. It st
 
 Keep `position.z = 0` and `scale.z = 1` for a simple flat layout. Depth does not change apparent size. For overlapping layers, smaller z values are closer; use values from 0 up to, but excluding, 1 with the current depth test. See [Apple's coordinate and viewport documentation](https://developer.apple.com/library/archive/documentation/Miscellaneous/Conceptual/MetalProgrammingGuide/Render-Ctx/Render-Ctx.html).
 
-`SceneConfiguration.objectColor` supplies the initial RGBA color for each object. The fragment shader returns each object's color directly. For runtime movement or resizing, change a `RenderObject`'s `placement.position` or `placement.scale`; its model matrix is computed from the current values.
+`SceneConfiguration.objectColor` supplies the initial RGBA color for each object. The fragment shader returns each object's color directly. Configuration supplies the starting values; the renderer owns the live `RenderObject` values after setup.
+
+## Access an object during a frame
+
+Use its ID in `Renderer.updateScene()` to change position, size, or color:
+
+```swift
+updateObject(.topBar) { object in
+    object.placement.position.x = 0.4
+    object.placement.scale.x = 0.6
+}
+```
+
+`updateObject` finds the ID, gives your closure an editable value with `inout`, and saves the result back into the scene. The closure can also read other objects by ID. It returns `false` if the ID is absent. Use `object(withID: .topBar)` to read its current state; that returns an optional copy because `RenderObject` is a struct. Editing that copy on its own will not change the scene. Each object's model matrix is computed from its current placement.
+
+Every `draw(in:)` call runs `updateInput → updateScene → encodeFrame`. Put behavior in `updateScene()`; `encodeFrame` draws the resulting state. The existing example moves only `.circle` to the mouse, preserving its scale and z position. When there is no mouse position, the circle stays where it was. Remove that update block if you want to control the circle another way.
 
 ## Mouse position
 
@@ -80,16 +101,17 @@ Use the coordinate value that matches your work:
 | `inputView.mouseCanvasPosition` | Centered square canvas coordinates: center `(0, 0)`, right edge x = 1, top edge y = 1. |
 | `Renderer.mousePosition` | Scene coordinates, with camera movement accounted for; compare these with `ObjectPlacement.position.x/y`. |
 
-In `Renderer`, the `mousePosition` variable is refreshed in `updateInput(from:deltaTime:)` every frame. You can read it there or elsewhere in the renderer:
+In `Renderer`, the `mousePosition` variable is refreshed in `updateInput(from:deltaTime:)` every frame. `updateScene()` reads it to move the circle:
 
 ```swift
-if let position = mousePosition {
-    // position.x and position.y are in the same space as the objects.
-    // Use them for a future selection, collision, or movement feature.
+guard let mousePosition else { return }
+updateObject(.circle) { object in
+    object.placement.position.x = mousePosition.x
+    object.placement.position.y = mousePosition.y
 }
 ```
 
-`private(set)` lets other code read the stored state while the owning type controls updates. The optional `?` means there may be no position: the view clears it when the cursor exits or the window loses focus or detaches. Canvas conversion also returns nil if padding leaves no usable canvas. Input tracking records state only; it does not move any objects.
+`private(set)` lets other code read the stored state while the owning type controls updates. The optional `?` means there may be no position: the view clears it when the cursor exits or the window loses focus or detaches. Canvas conversion also returns nil if padding leaves no usable canvas. Input tracking records state; `updateScene()` applies it to objects.
 
 For a 900 × 900 view with 100-point padding, the canvas side is 700. Subtract the view center `(450, 450)` from the mouse location, then divide by 350: the center becomes `(0, 0)` and the canvas's top-right corner becomes `(1, 1)`. The input view accounts for AppKit's y-axis orientation, while `Transforms.canvasPosition` performs the inverse of the render transform. Positions in the surrounding padding can exceed -1...1, matching the canvas's unclipped behavior. Using points rather than drawable pixels keeps the result consistent on Retina displays.
 
@@ -115,7 +137,7 @@ The tracking area follows the visible view bounds, and resizing or reactivating 
 ./Scripts/check.sh
 ```
 
-This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover scale/translation order, placement changes, square canvas fitting and padding, mouse-coordinate conversion and event callbacks, unchanged depth, camera movement, Swift/Metal uniform layout, circle geometry, mixed square/circle rendering, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
+This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover named-object lookup and updates, duplicate ID rejection, circle mouse-follow, scale/translation order, placement changes, square canvas fitting and padding, mouse-coordinate conversion and event callbacks, unchanged depth, camera movement, Swift/Metal uniform layout, circle geometry, mixed square/circle rendering, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
 
 To build Release:
 

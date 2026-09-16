@@ -6,6 +6,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private enum SetupError: LocalizedError {
         case missingDevice, missingCommandQueue, missingLibrary
         case missingShaders, invalidVertexDescriptor, missingDepthState
+        case duplicateObjectID(SceneObjectID)
 
         var errorDescription: String? {
             switch self {
@@ -15,6 +16,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             case .missingShaders: return "The vertex or fragment function is missing."
             case .invalidVertexDescriptor: return "The mesh vertex layout could not be converted to Metal."
             case .missingDepthState: return "Metal could not create the depth state."
+            case .duplicateObjectID(let id): return "Scene object IDs must be unique. Duplicate: \(id)."
             }
         }
     }
@@ -33,25 +35,34 @@ final class Renderer: NSObject, MTKViewDelegate {
     init(
         view: MTKView,
         library suppliedLibrary: MTLLibrary? = nil,
-        squarePlacements: [ObjectPlacement] = SceneConfiguration.squares,
-        circlePlacements: [ObjectPlacement] = [SceneConfiguration.circlePlacement]
+        sceneObjects: [SceneObjectConfiguration] = SceneConfiguration.objects
     ) throws {
+        var identifiers = Set<SceneObjectID>()
+        for object in sceneObjects {
+            guard identifiers.insert(object.id).inserted else {
+                throw SetupError.duplicateObjectID(object.id)
+            }
+        }
+
         guard let device = view.device else { throw SetupError.missingDevice }
         guard let queue = device.makeCommandQueue() else { throw SetupError.missingCommandQueue }
         commandQueue = queue
 
         let squareMesh = try SquareMesh.make(device: device)
-        // Share geometry within each shape; every object owns its placement.
-        objects = squarePlacements.map { placement in
-            RenderObject(mesh: squareMesh, placement: placement, color: SceneConfiguration.objectColor)
-        }
-
         let circleMesh = try CircleMesh.make(device: device)
-        objects += circlePlacements.map { placement in
-            RenderObject(
-                mesh: circleMesh,
-                placement: placement,
-                color: SceneConfiguration.objectColor
+
+        // Share geometry within each shape; every object owns its ID and placement.
+        objects = sceneObjects.map { configuration in
+            let mesh: MTKMesh
+            switch configuration.geometry {
+            case .square: mesh = squareMesh
+            case .circle: mesh = circleMesh
+            }
+            return RenderObject(
+                id: configuration.id,
+                mesh: mesh,
+                placement: configuration.placement,
+                color: configuration.color
             )
         }
 
@@ -104,6 +115,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         } else {
             mousePosition = nil
         }
+        updateScene()
 
         guard view.drawableSize.width > 0, view.drawableSize.height > 0,
               let pass = view.currentRenderPassDescriptor,
@@ -126,6 +138,31 @@ final class Renderer: NSObject, MTKViewDelegate {
         camera.update(direction: view.movementDirection, deltaTime: deltaTime)
         mousePosition = view.mouseCanvasPosition.map { position in
             position + SIMD2(camera.position.x, camera.position.y)
+        }
+    }
+
+    /// Read an object's current state by name. RenderObject is a value, so this returns a copy.
+    func object(withID id: SceneObjectID) -> RenderObject? {
+        objects.first { $0.id == id }
+    }
+
+    /// Edit an object by name and save it back to the scene.
+    @discardableResult
+    func updateObject(_ id: SceneObjectID, _ update: (inout RenderObject) -> Void) -> Bool {
+        guard let index = objects.firstIndex(where: { $0.id == id }) else { return false }
+        // Work on a copy so the closure can also read other objects in the scene.
+        var object = objects[index]
+        update(&object)
+        objects[index] = object
+        return true
+    }
+
+    /// Scene behavior belongs here, after input is read and before the GPU draws it.
+    func updateScene() {
+        guard let mousePosition else { return }
+        updateObject(.circle) { object in
+            object.placement.position.x = mousePosition.x
+            object.placement.position.y = mousePosition.y
         }
     }
 

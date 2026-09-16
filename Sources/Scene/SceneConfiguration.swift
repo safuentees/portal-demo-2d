@@ -12,29 +12,43 @@ enum SceneConfiguration {
     static let initialCanvasSide: CGFloat = 700
     static let minimumCanvasSide: CGFloat = 400
 
-    // One entry per square. Add, remove, or edit entries here.
+    // Solid circles have radius 1 before placement scaling.
+    static let circleSegments = 64
+    static let circleScale: Float = 0.1
+
+    // One entry per object. Give each entry a unique ID to access it later.
     // At rest, x/y range from -1 to 1 across the centered square canvas.
-    // Scale 1 keeps the unit mesh size: half the canvas width/height.
-    // Use z = 0 and scale.z = 1 for these flat squares.
-    static let squares: [ObjectPlacement] = [
-        // Bottom-right bar.
-        ObjectPlacement(
-            position: SIMD3(0.9 - (0.4 / 2), -0.9, 0),
-            scale: SIMD3(0.4, 0.05, 1)
+    // A square at scale 1 spans half the canvas; a circle spans the whole canvas.
+    // Use z = 0 and scale.z = 1 for this flat layout.
+    static let objects: [SceneObjectConfiguration] = [
+        SceneObjectConfiguration(
+            id: .bottomBar,
+            geometry: .square,
+            placement: ObjectPlacement(
+                position: SIMD3(0.9 - (0.4 / 2), -0.9, 0),
+                scale: SIMD3(0.4, 0.05, 1)
+            ),
+            color: objectColor
         ),
-        // Top-left bar.
-        ObjectPlacement(
-            position: SIMD3(-0.9 + (0.4 / 2), 0.9, 0),
-            scale: SIMD3(0.4, 0.05, 1)
+        SceneObjectConfiguration(
+            id: .topBar,
+            geometry: .square,
+            placement: ObjectPlacement(
+                position: SIMD3(-0.9 + (0.4 / 2), 0.9, 0),
+                scale: SIMD3(0.4, 0.05, 1)
+            ),
+            color: objectColor
+        ),
+        SceneObjectConfiguration(
+            id: .circle,
+            geometry: .circle,
+            placement: ObjectPlacement(
+                position: SIMD3(0, 0, 0),
+                scale: SIMD3(circleScale, circleScale, 1)
+            ),
+            color: objectColor
         ),
     ]
-    // Solid circle: radius 1 before placement scaling. More segments make a smoother edge.
-    static let circleSegments = 64
-    static let scale: Float = 0.1
-    static let circlePlacement = ObjectPlacement(
-        position: SIMD3(0, 0, 0),
-        scale: SIMD3(scale, scale, 1)
-    )
 
     // Geometry settings for the optional sphere mesh.
     static let sphereExtent = SIMD3<Float>(repeating: 0.75)

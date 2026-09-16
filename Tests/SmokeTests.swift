@@ -14,6 +14,45 @@ struct SmokeTests {
         ObjectPlacement(position: [0.65, -0.65, 0.6], scale: [0.2, 0.2, 1]),
     ]
 
+    static func sceneObjects(
+        squares: [ObjectPlacement] = [], circles: [ObjectPlacement] = []
+    ) -> [SceneObjectConfiguration] {
+        squares.enumerated().map { index, placement in
+            SceneObjectConfiguration(
+                id: .custom("square-\(index)"), geometry: .square,
+                placement: placement, color: SceneConfiguration.objectColor
+            )
+        } + circles.enumerated().map { index, placement in
+            SceneObjectConfiguration(
+                id: .custom("circle-\(index)"), geometry: .circle,
+                placement: placement, color: SceneConfiguration.objectColor
+            )
+        }
+    }
+
+    static let namedScene: [SceneObjectConfiguration] = [
+        SceneObjectConfiguration(
+            id: .custom("other-circle"), geometry: .circle,
+            placement: ObjectPlacement(position: [0.7, 0.65, 0.2], scale: [0.08, 0.08, 1])
+        ),
+        SceneObjectConfiguration(
+            id: .topBar, geometry: .square,
+            placement: ObjectPlacement(position: [-0.65, 0.7, 0], scale: [0.25, 0.1, 1])
+        ),
+        SceneObjectConfiguration(
+            id: .circle, geometry: .circle,
+            placement: ObjectPlacement(position: [-0.5, 0.5, 0.4], scale: [0.16, 0.12, 1])
+        ),
+        SceneObjectConfiguration(
+            id: .bottomBar, geometry: .square,
+            placement: ObjectPlacement(position: [-0.65, -0.7, 0], scale: [0.2, 0.1, 1])
+        ),
+    ].map { configuration in
+        var configuration = configuration
+        configuration.color = SceneConfiguration.objectColor
+        return configuration
+    }
+
     struct Failure: Error, CustomStringConvertible {
         let description: String
     }
@@ -33,14 +72,15 @@ struct SmokeTests {
             throw Failure(description: "A Metal GPU is required for the render checks.")
         }
         let library = try device.makeLibrary(URL: URL(fileURLWithPath: CommandLine.arguments[1]))
-        try checkMouseInput(device: device, library: library)
+        try checkMouseInput(device: device, library: library, queue: queue)
         let view = MTKView(frame: .zero, device: device)
         view.colorPixelFormat = .bgra8Unorm
         view.depthStencilPixelFormat = .depth32Float
         try checkObjectPlacement(device: device)
         try checkMeshes(device: device)
+        try checkNamedObjects(view: view, library: library)
         let renderer = try Renderer(
-            view: view, library: library, squarePlacements: placements, circlePlacements: []
+            view: view, library: library, sceneObjects: sceneObjects(squares: placements)
         )
 
         let viewports: [(Int, Int, CGSize?)] = [
@@ -66,7 +106,7 @@ struct SmokeTests {
             print("PASS: \(width)x\(height) \(backingScale) — centered square canvas, padding, independent sizes, stable frame")
         }
         let emptyRenderer = try Renderer(
-            view: view, library: library, squarePlacements: [], circlePlacements: []
+            view: view, library: library, sceneObjects: []
         )
         let empty = try render(emptyRenderer, device: device, queue: queue, width: 512, height: 512)
         try checkPixels(empty, width: 512, height: 512, placements: [])
@@ -144,7 +184,9 @@ struct SmokeTests {
 
     static func checkObjectPlacement(device: MTLDevice) throws {
         let mesh = try SquareMesh.make(device: device)
-        var object = RenderObject(mesh: mesh, placement: ObjectPlacement(position: [4, -3, 2]))
+        var object = RenderObject(
+            id: .custom("placement"), mesh: mesh, placement: ObjectPlacement(position: [4, -3, 2])
+        )
         object.placement.position = [7, 8, 9]
         object.placement.scale = [1, 0.5, 2]
         let point = SIMD4<Float>(1, -2, 3, 1)
@@ -196,7 +238,7 @@ struct SmokeTests {
     }
 
     @MainActor
-    static func checkMouseInput(device: MTLDevice, library: MTLLibrary) throws {
+    static func checkMouseInput(device: MTLDevice, library: MTLLibrary, queue: MTLCommandQueue) throws {
         _ = NSApplication.shared
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 900),
@@ -250,10 +292,43 @@ struct SmokeTests {
         try expect(view.mousePosition == point, "Mouse events must convert window locations into native view points.")
         try expect(view.mouseCanvasPosition == SIMD2<Float>(0.5, -0.25),
                    "Mouse mapping must account for bounds origin and use logical points, not Retina drawable pixels.")
-        let renderer = try Renderer(view: view, library: library, squarePlacements: [], circlePlacements: [])
+        let renderer = try Renderer(view: view, library: library, sceneObjects: namedScene)
+        renderer.updateScene()
+        try expect(renderer.object(withID: .circle)?.placement.position == SIMD3<Float>(-0.5, 0.5, 0.4),
+                   "A scene without mouse input must retain its configured circle position.")
+        view.drawableSize = .zero
+        renderer.draw(in: view)
+        view.drawableSize = CGSize(width: 1800, height: 1200)
+        try expect(renderer.mousePosition == SIMD2<Float>(0.5, -0.25)
+                   && renderer.object(withID: .circle)?.placement.position == SIMD3<Float>(0.5, -0.25, 0.4),
+                   "The draw loop must read input and update the scene before checking drawable availability.")
         renderer.updateInput(from: view, deltaTime: 0)
         try expect(renderer.mousePosition == view.mouseCanvasPosition,
                    "The renderer must consume the input view's canvas position at rest.")
+        renderer.updateScene()
+        try expect(renderer.object(withID: .circle)?.placement.position == SIMD3<Float>(0.5, -0.25, 0.4)
+                   && renderer.object(withID: .circle)?.placement.scale == SIMD3<Float>(0.16, 0.12, 1),
+                   "The named circle must follow mouse X/Y while preserving its depth and scale.")
+        for configuration in namedScene where configuration.id != .circle {
+            try expect(renderer.object(withID: configuration.id)?.placement.position == configuration.placement.position
+                       && renderer.object(withID: configuration.id)?.placement.scale == configuration.placement.scale,
+                       "Mouse following must leave both bars and other circles unchanged.")
+        }
+        var expectedSquares: [ObjectPlacement] = []
+        var expectedCircles: [ObjectPlacement] = []
+        for configuration in namedScene {
+            var placement = configuration.placement
+            if configuration.id == .circle { placement.position = [0.5, -0.25, 0.4] }
+            switch configuration.geometry {
+            case .square: expectedSquares.append(placement)
+            case .circle: expectedCircles.append(placement)
+            }
+        }
+        let movedPixels = try render(renderer, device: device, queue: queue, width: 900, height: 600)
+        try checkPixels(
+            movedPixels, width: 900, height: 600,
+            placements: expectedSquares, circlePlacements: expectedCircles
+        )
 
         let center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
         for type in [NSEvent.EventType.leftMouseDragged, .rightMouseDragged, .otherMouseDragged] {
@@ -266,6 +341,10 @@ struct SmokeTests {
             }
             try expect(view.mousePosition == center && view.mouseCanvasPosition == SIMD2<Float>.zero,
                        "Every mouse drag callback must update the stored position.")
+            renderer.updateInput(from: view, deltaTime: 0)
+            renderer.updateScene()
+            try expect(renderer.object(withID: .circle)?.placement.position == SIMD3<Float>(0, 0, 0.4),
+                       "The circle must continue following subsequent drag input.")
         }
         view.mouseDown(with: try event(.leftMouseDown, at: point))
         try expect(view.mousePosition == point, "A mouse click must update position before the next move.")
@@ -273,10 +352,17 @@ struct SmokeTests {
         view.mouseMoved(with: try event(.mouseMoved, at: padding))
         try expect(view.mouseCanvasPosition == SIMD2<Float>(-2, 0),
                    "Mouse positions in window padding must remain available outside -1...1.")
+        renderer.updateInput(from: view, deltaTime: 0)
+        renderer.updateScene()
+        let lastPosition = renderer.object(withID: .circle)?.placement.position
+        try expect(lastPosition == SIMD3<Float>(-2, 0, 0.4), "Circle following must not clamp input in padding.")
         view.mouseExited(with: try event(.mouseExited, at: padding))
         renderer.updateInput(from: view, deltaTime: 0)
+        renderer.updateScene()
         try expect(view.mousePosition == nil && view.mouseCanvasPosition == nil && renderer.mousePosition == nil,
                    "Leaving the view must clear input and renderer mouse positions.")
+        try expect(renderer.object(withID: .circle)?.placement.position == lastPosition,
+                   "When mouse input becomes unavailable, the circle must hold its last position.")
         view.mouseEntered(with: try event(.mouseEntered, at: point))
         try expect(view.mousePosition == point, "Reentering the view must restore the current mouse location.")
         NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
@@ -293,7 +379,49 @@ struct SmokeTests {
                    "Detaching the view must clear mouse input.")
         view.mouseMoved(with: moved)
         try expect(view.mousePosition == nil, "Detached views must ignore mouse callbacks.")
-        print("PASS: canvas input inverse, native move/drag/click/enter/exit, Retina points, input cleanup")
+        print("PASS: native mouse input, named-circle following, preserved scene properties, GPU position, input cleanup")
+    }
+
+    @MainActor
+    static func checkNamedObjects(view: MTKView, library: MTLLibrary) throws {
+        for configurations in [namedScene, Array(namedScene.reversed())] {
+            let renderer = try Renderer(view: view, library: library, sceneObjects: configurations)
+            try expect(renderer.object(withID: .circle)?.id == .circle,
+                       "Named lookup must remain stable when the scene array is reordered.")
+            let changed = renderer.updateObject(.topBar) { object in
+                object.placement.position = [0.3, 0.4, 0.2]
+                object.placement.scale = [0.6, 0.2, 1]
+                object.color = [1, 0.5, 0.25, 1]
+            }
+            try expect(changed
+                       && renderer.object(withID: .topBar)?.placement.position == SIMD3<Float>(0.3, 0.4, 0.2)
+                       && renderer.object(withID: .topBar)?.placement.scale == SIMD3<Float>(0.6, 0.2, 1)
+                       && renderer.object(withID: .topBar)?.color == SIMD4<Float>(1, 0.5, 0.25, 1),
+                       "Targeted mutation must update the named object's position, scale, and color.")
+            for configuration in configurations where configuration.id != .topBar {
+                try expect(renderer.object(withID: configuration.id)?.placement.position == configuration.placement.position
+                           && renderer.object(withID: configuration.id)?.color == configuration.color,
+                           "Targeted mutation must leave every other named object unchanged.")
+            }
+            let copied = renderer.updateObject(.topBar) { object in
+                if let bottomBar = renderer.object(withID: .bottomBar) {
+                    object.placement.position.x = bottomBar.placement.position.x
+                }
+            }
+            try expect(copied
+                       && renderer.object(withID: .topBar)?.placement.position == SIMD3<Float>(-0.65, 0.4, 0.2),
+                       "An update closure must be able to read another object without overlapping storage access.")
+            var invokedMissingUpdate = false
+            let missing = renderer.updateObject(.custom("missing")) { _ in invokedMissingUpdate = true }
+            try expect(!missing && !invokedMissingUpdate && renderer.object(withID: .custom("missing")) == nil,
+                       "Missing IDs must return nil/false without invoking a mutation.")
+        }
+        var duplicateRejected = false
+        do {
+            _ = try Renderer(view: view, library: library, sceneObjects: [namedScene[0], namedScene[0]])
+        } catch { duplicateRejected = true }
+        try expect(duplicateRejected, "Duplicate scene IDs must be rejected instead of selecting an arbitrary object.")
+        print("PASS: reordered scene IDs, targeted mutations, missing IDs, duplicate rejection")
     }
 
     static func checkMeshes(device: MTLDevice) throws {
@@ -363,7 +491,7 @@ struct SmokeTests {
         ]
         let circles = [ObjectPlacement(position: [0.1, -0.05, 0.5], scale: [0.5, 0.4, 1])]
         let renderer = try Renderer(
-            view: view, library: library, squarePlacements: squares, circlePlacements: circles
+            view: view, library: library, sceneObjects: sceneObjects(squares: squares, circles: circles)
         )
         let viewports: [(Int, Int, CGSize?)] = [
             (512, 512, nil), (800, 400, nil),

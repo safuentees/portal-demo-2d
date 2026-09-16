@@ -2,6 +2,7 @@ import MetalKit
 
 /// GPU geometry paired with the object's editable scene properties.
 struct RenderObject {
+    let id: SceneObjectID
     let mesh: MTKMesh
 
     var placement = ObjectPlacement()
