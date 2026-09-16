@@ -822,32 +822,54 @@ struct SmokeTests {
                         trianglePlacements: [conePlacement, copiedPlacements[1]])
 
         let startup = try Renderer(view: view, library: library)
-        var editedPositions: [SceneObjectID: SIMD3<Float>] = [:]
         for (sourceID, cloneID) in pairs {
             guard let source = startup.object(withID: sourceID), let clone = startup.object(withID: cloneID) else {
                 throw Failure(description: "The default renderer must create the circle and cone clones once.")
             }
             try expect(clone.mesh === source.mesh
-                       && clone.placement.position == source.placement.position + SceneConfiguration.cloneOffset
+                       && clone.placement.position == source.placement.position
                        && clone.placement.scale == source.placement.scale
                        && clone.placement.angle == source.placement.angle && clone.color == source.color,
-                       "Default clones must copy their sources and apply only the configured startup offset.")
-            let editedPosition = clone.placement.position + SIMD3<Float>(0.1, 0.1, 0)
-            startup.updateObject(cloneID) { $0.placement.position = editedPosition }
-            editedPositions[cloneID] = editedPosition
+                       "Default clones must initially overlap their sources for the portal round trip.")
+            startup.updateObject(sourceID) {
+                $0.placement.position += SIMD3<Float>(0.13, -0.17, 0)
+                $0.placement.angle = 1.1
+            }
+            startup.updateObject(cloneID) {
+                $0.placement.position = [99, 99, 4]
+                $0.placement.angle = -2
+            }
         }
+        startup.updateObject(.bottomBar) {
+            $0.placement.position = [0.3, -0.2, 0]
+            $0.placement.angle = 0.73
+            $0.placement.scale = [0.4, 0.035, 1]
+        }
+        startup.updateScene()
         let before = try render(startup, device: device, queue: queue, width: 512, height: 512)
-        for _ in 0..<3 {
+        for _ in 0..<120 {
             startup.updateScene(deltaTime: 0.1)
-            startup.draw(in: view)
         }
-        for (cloneID, editedPosition) in editedPositions {
-            try expect(startup.object(withID: cloneID)?.placement.position == editedPosition,
-                       "Repeated scene updates must not recreate or reset an edited clone.")
+        for (sourceID, cloneID) in pairs {
+            guard let source = startup.object(withID: sourceID), let clone = startup.object(withID: cloneID) else {
+                throw Failure(description: "A portal round-trip source or clone is missing.")
+            }
+            for column in 0..<4 {
+                try expect(simd_distance(source.modelMatrix[column], clone.modelMatrix[column]) < 0.00001,
+                           "Portal-local conversion and return must preserve position, scale, and orientation without drift.")
+            }
+            startup.updateObject(sourceID) { $0.placement.position.x += 0.1 }
+            startup.updateScene()
+            let currentSource = startup.object(withID: sourceID)!
+            let currentClone = startup.object(withID: cloneID)!
+            try expect(simd_distance(currentSource.placement.position, currentClone.placement.position) < 0.00001,
+                       "Clones must read their original's current position even without a mouse event.")
+            startup.updateObject(sourceID) { $0.placement.position = source.placement.position }
+            startup.updateScene()
         }
         let after = try render(startup, device: device, queue: queue, width: 512, height: 512)
-        try expect(before == after, "Repeated frames must not add extra visible clone copies.")
-        print("PASS: shared-mesh clones, independent copies, rejected IDs, GPU duplicates, stable default startup")
+        try expect(before == after, "Repeated portal round trips must produce stable pixels without flickering.")
+        print("PASS: shared-mesh clones, independent copies, rejected IDs, GPU duplicates, stable portal round trip")
     }
 
     static func checkMeshes(device: MTLDevice) throws {

@@ -44,10 +44,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             (.cone, .coneClone),
         ]
         for (sourceID, cloneID) in pairs {
-            if cloneObject(sourceID, newID: cloneID) {
-                updateObject(cloneID) { clone in
-                }
-            }
+            cloneObject(sourceID, newID: cloneID)
         }
     }
 
@@ -218,14 +215,6 @@ final class Renderer: NSObject, MTKViewDelegate {
         objects[index] = object
         return true
     }
-    
-    /// Edit an object by name and save it back to the scene.
-    @discardableResult
-    func findObjectIndex(_ id: SceneObjectID) -> Int {
-        guard let index = objects.firstIndex(where: { $0.id == id }) else { return -1 }
-        // Work on a copy so the closure can also read other objects in the scene.
-        return index
-    }
 
     /// Scene behavior belongs here, after input is read and before the GPU draws it.
     func updateScene(deltaTime: Float = 0) {
@@ -240,36 +229,45 @@ final class Renderer: NSObject, MTKViewDelegate {
                 }
             }
         }
-        
-
-        for id: SceneObjectID in [.circleClone, .coneClone] {
-            
-            updateObject(id) { object in
-                let t = object.modelMatrix
-                let p = simd_inverse(t) * simd_float4(object.placement.position, 1.0) * t
-                let newPosition = SIMD3(p.x,p.y,p.z)
-
-                
-                let direction = SIMD4<Float>(cos(object.placement.angle), sin(object.placement.angle), 0, 0)
-                let transformed = direction * t
-                let newAngle = atan2(transformed.y, transformed.x)
-
-                object.placement = ObjectPlacement(position: newPosition, scale: object.placement.scale, angle: newAngle,
-                )
-            }
-        }
-        
 
         // Consume one intentional pointer update. Walking alone keeps the current heading.
-        guard let aimPosition = pendingAimPosition else { return }
-        pendingAimPosition = nil
-        updateObject(.cone) { object in
-            let position = object.placement.position
-            let direction = aimPosition - SIMD2(position.x, position.y)
-            let deadZone = SceneConfiguration.lookDeadZoneRadius
-            guard simd_length_squared(direction) > deadZone * deadZone else { return }
-            // atan2 measures from +X; the mesh's flat edge faces local +Y.
-            object.placement.angle = atan2(direction.y, direction.x) - .pi / 2
+        if let aimPosition = pendingAimPosition {
+            pendingAimPosition = nil
+            updateObject(.cone) { object in
+                let position = object.placement.position
+                let direction = aimPosition - SIMD2(position.x, position.y)
+                let deadZone = SceneConfiguration.lookDeadZoneRadius
+                guard simd_length_squared(direction) > deadZone * deadZone else { return }
+                // atan2 measures from +X; the mesh's flat edge faces local +Y.
+                object.placement.angle = atan2(direction.y, direction.x) - .pi / 2
+            }
+        }
+
+        guard let portal = object(withID: .bottomBar) else { return }
+        // The portal's coordinate frame excludes its visual width and thickness.
+        let portalFrame = Transforms.rotation(portal.placement.angle)
+            * Transforms.translation(portal.placement.position)
+        let inverseFrame = simd_inverse(portalFrame)
+        let pairs: [(SceneObjectID, SceneObjectID)] = [
+            (.circle, .circleClone), (.cone, .coneClone),
+        ]
+        for (sourceID, cloneID) in pairs {
+            guard let source = object(withID: sourceID) else { continue }
+            // World -> portal-local -> world. Always start from the original.
+            let relativePosition = SIMD4<Float>(source.placement.position, 1) * inverseFrame
+            let worldPosition = relativePosition * portalFrame
+
+            let direction = SIMD4<Float>(cos(source.placement.angle), sin(source.placement.angle), 0, 0)
+            let relativeDirection = direction * inverseFrame
+            let worldDirection = relativeDirection * portalFrame
+
+            updateObject(cloneID) { clone in
+                clone.placement = ObjectPlacement(
+                    position: SIMD3<Float>(worldPosition.x, worldPosition.y, worldPosition.z),
+                    scale: source.placement.scale,
+                    angle: atan2(worldDirection.y, worldDirection.x)
+                )
+            }
         }
     }
 
