@@ -9,7 +9,7 @@ Current release: **v1.0.0** (app version 1.0.0, build 1). See `CHANGELOG.md` for
 Clone the private repository while signed in with GitHub CLI:
 
 ```sh
-gh repo clone safuentees/portal-demo-2d
+gh repo clone safuentees/metsl-starter
 cd metsl-starter
 open MetslStarter.xcodeproj
 ```
