@@ -7,6 +7,18 @@ enum Transforms {
         simd_float4x4(diagonal: SIMD4<Float>(scale.x, scale.y, scale.z, 1))
     }
 
+    /// Rotate counterclockwise in the XY plane. The angle is in radians.
+    static func rotation(_ angle: Float) -> simd_float4x4 {
+        let cosine = cos(angle)
+        let sine = sin(angle)
+        return simd_float4x4(columns: (
+            SIMD4<Float>(cosine, -sine, 0, 0),
+            SIMD4<Float>(sine, cosine, 0, 0),
+            SIMD4<Float>(0, 0, 1, 0),
+            SIMD4<Float>(0, 0, 0, 1)
+        ))
+    }
+
     /// Fit the logical -1...1 square inside a padded view, centered on the origin.
     /// Size and padding share the same units (points for the onscreen view).
     static func squareCanvas(size: SIMD2<Float>, padding: Float) -> simd_float4x4 {

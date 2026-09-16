@@ -1,6 +1,6 @@
 # Metsl Starter
 
-A ready-to-run macOS Metal project based on `metsl-macOS`, with independently positioned and scaled blue squares and a solid circle on a dark background. The window, camera controls, GPU setup, and shaders are already wired together; sphere geometry is also available for experiments.
+A ready-to-run macOS Metal project based on `metsl-macOS`, with independently positioned and scaled blue squares, a solid circle, and a triangle that aims toward the mouse on a dark background. The window, camera controls, GPU setup, and shaders are already wired together; sphere geometry is also available for experiments.
 
 ## Version and repository
 
@@ -30,23 +30,24 @@ The project uses SwiftUI, AppKit, MetalKit, Model I/O, and SIMD. There are no ex
 
 | Change | File |
 | --- | --- |
-| Square/circle positions and scales, circle detail, canvas padding, scene colors | `Sources/Scene/SceneConfiguration.swift` |
+| Object positions, scales, and starting angles; circle detail, canvas padding, scene colors | `Sources/Scene/SceneConfiguration.swift` |
 | Object IDs and the initial data for each scene object | `Sources/Scene/SceneObjectConfiguration.swift` |
-| Position/scale data and model transform | `Sources/Scene/ObjectPlacement.swift` |
+| Position, scale, rotation angle, and model transform | `Sources/Scene/ObjectPlacement.swift` |
 | Mesh, placement, and color for one rendered object | `Sources/Rendering/RenderObject.swift` |
 | Vertex transforms or fragment color | `Sources/Shaders/Shaders.metal` |
 | Render pipeline and drawing | `Sources/Rendering/Renderer.swift` |
 | Shared 2D vertex layout and GPU buffer creation | `Sources/Rendering/Meshes/Mesh2D.swift` |
 | Unit square vertices and triangle indices | `Sources/Rendering/Meshes/SquareMesh.swift` |
 | Solid circle vertices and triangle indices | `Sources/Rendering/Meshes/CircleMesh.swift` |
+| Triangle vertices used by the cone | `Sources/Rendering/Meshes/TriangleMesh.swift` |
 | Optional sphere geometry and mesh detail | `Sources/Rendering/Meshes/SphereMesh.swift` |
 | Camera state and movement | `Sources/Scene/Camera.swift` |
-| Scale, translation, and square canvas fitting | `Sources/Scene/Transforms.swift` |
+| Scale, rotation, translation, and square canvas fitting | `Sources/Scene/Transforms.swift` |
 | Keyboard and mouse events/state | `Sources/Input/KeyboardMetalView.swift` |
 | View setup, draw rate, renderer lifetime | `Sources/Views/MetalView.swift` |
 | Window title and initial size | `Sources/App/MetslStarterApp.swift` |
 
-Edit `SceneConfiguration.objects` to arrange the scene. Every entry creates one object; its ID, shape, position, scale, and color stay together:
+Edit `SceneConfiguration.objects` to arrange the scene. Every entry creates one object; its ID, shape, placement, and color stay together:
 
 ```swift
 SceneObjectConfiguration(
@@ -60,9 +61,11 @@ SceneObjectConfiguration(
 )
 ```
 
-Add or remove entries to change the object count. Use the named IDs `.bottomBar`, `.topBar`, and `.circle` for the existing objects. For new objects, add a case to `SceneObjectID` or use a unique `.custom("name")`. IDs identify individual objects, independently of their shape or array order; duplicate IDs cause a setup error. The renderer shares one mesh across all objects of the same shape, and changing one entry's scale does not affect the others. Placement defaults are position `(0, 0, 0)` and scale `(1, 1, 1)`.
+Add or remove entries to change the object count. Use the named IDs `.bottomBar`, `.topBar`, `.circle`, and `.cone` for the existing objects. For new objects, add a case to `SceneObjectID` or use a unique `.custom("name")`. IDs identify individual objects, independently of their shape or array order; duplicate IDs cause a setup error. The renderer shares one mesh across all objects of the same shape, and changing one entry's placement does not affect the others. Placement defaults are position `(0, 0, 0)`, scale `(1, 1, 1)`, and angle `0` radians.
 
-Edit the `.circle` entry to set the solid circle's initial position and scale; `circleScale` is currently `0.1`. This object follows the cursor during scene updates. The circle mesh has radius 1, so scale `(1, 1, 1)` fills the canvas diameter and `(0.5, 0.5, 1)` makes it half as wide. Different x/y scales make an ellipse. `circleSegments` controls edge smoothness (64 by default). The mesh includes a center vertex and a ring of rim vertices; every adjacent pair on the rim forms a triangle with the center, including the closing pair. This fills the circle without a hole or an open seam.
+Edit the `.circle` entry to set the solid circle's position and scale; `circleScale` is currently `0.1`. The circle mesh has radius 1, so scale `(1, 1, 1)` fills the canvas diameter and `(0.5, 0.5, 1)` makes it half as wide. Different x/y scales make an ellipse. `circleSegments` controls edge smoothness (64 by default). The mesh includes a center vertex and a ring of rim vertices; every adjacent pair on the rim forms a triangle with the center, including the closing pair. This fills the circle without a hole or an open seam.
+
+The `.cone` uses the flat triangle mesh. Its tip starts along +Y and its pivot is the base midpoint at local `(0, 0)`. Scene updates rotate it around that pivot to face the cursor.
 
 With the camera at rest, `(0, 0)` is the center of an invisible square canvas, positive x goes right, and positive y goes up. Its edges are at `-1...1` on both axes. For the unit square mesh, scale `(1, 1, 1)` spans half the canvas width and height; `(0.5, 0.5, 1)` spans one quarter. Different x/y scales make rectangles. Object coordinates and proportions stay the same when the window changes shape.
 
@@ -76,18 +79,21 @@ Keep `position.z = 0` and `scale.z = 1` for a simple flat layout. Depth does not
 
 ## Access an object during a frame
 
-Use its ID in `Renderer.updateScene()` to change position, size, or color:
+Use its ID in `Renderer.updateScene()` to change position, size, angle, or color:
 
 ```swift
 updateObject(.topBar) { object in
     object.placement.position.x = 0.4
     object.placement.scale.x = 0.6
+    object.placement.angle = .pi / 4 // 45 degrees counterclockwise.
 }
 ```
 
 `updateObject` finds the ID, gives your closure an editable value with `inout`, and saves the result back into the scene. The closure can also read other objects by ID. It returns `false` if the ID is absent. Use `object(withID: .topBar)` to read its current state; that returns an optional copy because `RenderObject` is a struct. Editing that copy on its own will not change the scene. Each object's model matrix is computed from its current placement.
 
-Every `draw(in:)` call runs `updateInput → updateScene → encodeFrame`. Put behavior in `updateScene()`; `encodeFrame` draws the resulting state. The existing example moves only `.circle` to the mouse, preserving its scale and z position. When there is no mouse position, the circle stays where it was. Remove that update block if you want to control the circle another way.
+`ObjectPlacement` stores an angle in radians. `Transforms.rotation(angle)` builds the matrix, and `ObjectPlacement.modelMatrix` combines `scale * rotation * translation`. Set `placement.angle` to change orientation; the computed `RenderObject.modelMatrix` remains read-only. Positive angles rotate counterclockwise around the local origin. Scale and rotation happen before translation, so rotating an object keeps its pivot at `placement.position`.
+
+Every `draw(in:)` call runs `updateInput → updateScene → encodeFrame`. Put behavior in `updateScene()`; `encodeFrame` draws the resulting state. The existing example aims only `.cone` toward the mouse, preserving its position and scale. If the mouse is unavailable or exactly on the pivot, the cone holds its last angle. Remove that update block if you want to control the cone another way.
 
 ## Mouse position
 
@@ -101,15 +107,19 @@ Use the coordinate value that matches your work:
 | `inputView.mouseCanvasPosition` | Centered square canvas coordinates: center `(0, 0)`, right edge x = 1, top edge y = 1. |
 | `Renderer.mousePosition` | Scene coordinates, with camera movement accounted for; compare these with `ObjectPlacement.position.x/y`. |
 
-In `Renderer`, the `mousePosition` variable is refreshed in `updateInput(from:deltaTime:)` every frame. `updateScene()` reads it to move the circle:
+In `Renderer`, the `mousePosition` variable is refreshed in `updateInput(from:deltaTime:)` every frame. `updateScene()` reads it to aim the cone:
 
 ```swift
 guard let mousePosition else { return }
-updateObject(.circle) { object in
-    object.placement.position.x = mousePosition.x
-    object.placement.position.y = mousePosition.y
+updateObject(.cone) { object in
+    let position = object.placement.position
+    let direction = mousePosition - SIMD2(position.x, position.y)
+    guard simd_length_squared(direction) > 0 else { return }
+    object.placement.angle = atan2(direction.y, direction.x) - .pi / 2
 }
 ```
+
+Subtracting the object's position makes the direction correct even after moving the cone. `atan2` measures from +X; subtracting `pi / 2` accounts for the triangle's upward-pointing tip. Normalization is unnecessary. The result is an absolute angle, so assign it each frame rather than accumulating it.
 
 `private(set)` lets other code read the stored state while the owning type controls updates. The optional `?` means there may be no position: the view clears it when the cursor exits or the window loses focus or detaches. Canvas conversion also returns nil if padding leaves no usable canvas. Input tracking records state; `updateScene()` applies it to objects.
 
@@ -122,11 +132,11 @@ The tracking area follows the visible view bounds, and resizing or reactivating 
 - `MetalView` owns a coordinator that retains the renderer while `MTKView` holds its weak delegate.
 - The 60 fps loop supports smooth held-key movement. Camera movement uses elapsed time, normalizes diagonals, and clamps long debugger pauses.
 - The mesh and render/depth states are created once. Each frame encodes the draw, presents the drawable, and commits the command buffer.
-- Squares and circles share `Mesh2D`'s vertex format: one `float2` position at attribute 0, in buffer 0, with an 8-byte stride. The pipeline uses this shared descriptor; each draw supplies its object's own vertex and index buffers. Different shapes and vertex counts can share a pipeline because their data layout matches.
-- Both active mesh types draw indexed triangles. The optional sphere uses a different layout (position, normal, UV, 32-byte stride); adding it to this renderer requires adapting its layout or using a matching pipeline.
+- Squares, circles, and the cone triangle share `Mesh2D`'s vertex format: one `float2` position at attribute 0, in buffer 0, with an 8-byte stride. The pipeline uses this shared descriptor; each draw supplies its object's own vertex and index buffers. Different shapes and vertex counts can share a pipeline because their data layout matches.
+- All active mesh types draw indexed triangles. The optional sphere uses a different layout (position, normal, UV, 32-byte stride); adding it to this renderer requires adapting its layout or using a matching pipeline.
 - Depth uses `.depth32Float`, clears to 1, and compares with `.less`.
 - The canvas transform scales only x/y to fit a centered, padded square. Depth and homogeneous w stay unchanged: there is no perspective or depth-dependent shrinking.
-- Matrix conventions match `metsl`: **row vectors, +Z forward**. Each object's model matrix is `scale * translation`, so resizing does not move its center. The shader uses `position * model * view * canvas`.
+- Matrix conventions match `metsl`: **row vectors, +Z forward**. Each object's model matrix is `scale * rotation * translation`, so resizing and rotating preserve its positioned local origin. The shader uses `position * model * view * canvas`.
 - The canvas matrix is calculated once per frame using the view's point size, so moving between Retina and non-Retina displays preserves padding. A separate perspective helper remains available for experiments; the renderer does not call it.
 - Mesh attributes use buffer 0. Uniforms use buffer 1 in both shader stages. Keep `ShaderUniforms.swift` and the Metal struct's field order/types synchronized.
 - Xcode compiles `Shaders.metal` as a source into `default.metallib`; the renderer loads it with `makeDefaultLibrary()`.
@@ -137,7 +147,7 @@ The tracking area follows the visible view bounds, and resizing or reactivating 
 ./Scripts/check.sh
 ```
 
-This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover named-object lookup and updates, duplicate ID rejection, circle mouse-follow, scale/translation order, placement changes, square canvas fitting and padding, mouse-coordinate conversion and event callbacks, unchanged depth, camera movement, Swift/Metal uniform layout, circle geometry, mixed square/circle rendering, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
+This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover named-object lookup and updates, duplicate ID rejection, cone aiming, scale/rotation/translation order, placement changes, square canvas fitting and padding, mouse-coordinate conversion and event callbacks, unchanged depth, camera movement, Swift/Metal uniform layout, circle and triangle geometry, rotated triangle rendering, mixed square/circle rendering, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
 
 To build Release:
 

@@ -60,7 +60,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             case .circle: mesh = circleMesh
             case .triangle: mesh = triangleMesh
             }
-            
+
             return RenderObject(
                 id: configuration.id,
                 mesh: mesh,
@@ -77,7 +77,7 @@ final class Renderer: NSObject, MTKViewDelegate {
               let fragment = library.makeFunction(name: "object_fragment") else {
             throw SetupError.missingShaders
         }
-        // Both meshes are built with this exact layout; the pipeline does not belong to either shape.
+        // All flat meshes use this layout; the pipeline does not belong to one shape.
         guard let vertexDescriptor = MTKMetalVertexDescriptorFromModelIO(Mesh2D.makeVertexDescriptor()) else {
             throw SetupError.invalidVertexDescriptor
         }
@@ -163,18 +163,13 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Scene behavior belongs here, after input is read and before the GPU draws it.
     func updateScene() {
         guard let mousePosition else { return }
-        let direction = simd_normalize(mousePosition)
-        let a = atan2(direction.y, direction.x)
-        
-        let rot2d = simd_float4x4(columns: (
-            SIMD4<Float>(cos(a), -sin(a), 0, 0), // Column 0
-            SIMD4<Float>(sin(a), cos(a), 0, 0), // Column 1
-            SIMD4<Float>(0, 0, 1, 0), // Column 2
-            SIMD4<Float>(0, 0, 0, 1)  // Column 3
-        ))
-
         updateObject(.cone) { object in
-            object.modelMatrix = object.modelMatrix * rot2d
+            let position = object.placement.position
+            let direction = mousePosition - SIMD2(position.x, position.y)
+            // There is no direction when the cursor is exactly on the pivot.
+            guard simd_length_squared(direction) > 0 else { return }
+            // atan2 measures from +X; this triangle's tip starts along +Y.
+            object.placement.angle = atan2(direction.y, direction.x) - .pi / 2
         }
     }
 
