@@ -7,7 +7,9 @@ enum SceneConfiguration {
     static let backgroundColor = MTLClearColor(red: 24.0 / 255.0, green: 24.0 / 255.0, blue: 27.0 / 255.0, alpha: 1)
     static let objectColor = SIMD4<Float>(147.0 / 255.0, 197.0 / 255.0, 253.0 / 255.0, 1.0)
     static let playerColor = SIMD4<Float>(219.0 / 255.0, 234.0 / 255.0, 254.0 / 255.0, 1.0)
-    static let visionColor = SIMD4<Float>(147.0 / 255.0, 197.0 / 255.0, 253.0 / 255.0, 0.18)
+    static let visionColor = SIMD4<Float>(147.0 / 255.0, 197.0 / 255.0, 253.0 / 255.0, 0.12)
+    static let cloneColor = SIMD4<Float>(94.0 / 255.0, 234.0 / 255.0, 212.0 / 255.0, 1)
+    static let portalVisionColor = SIMD4<Float>(cloneColor.x, cloneColor.y, cloneColor.z, 0.16)
 
     // Window/layout dimensions use macOS points, so padding looks consistent on Retina.
     static let canvasPadding: CGFloat = 100
@@ -17,7 +19,10 @@ enum SceneConfiguration {
     // Solid circles have radius 1 before placement scaling.
     static let circleSegments = 64
     static let circleScale: Float = 0.05
-    static let visionScale = SIMD3<Float>(0.62, 0.50, 1)
+    // Radians: preserve the existing opening angle (about 64 degrees).
+    static let visionFieldOfView: Float = 2 * atan(0.62)
+    // Unit forward reach. Rendering extends both axes together to cover the window.
+    static let visionScale = SIMD3<Float>(2 * tan(visionFieldOfView / 2), 1, 1)
 
     // Show the cloned pair beside the originals until portal mapping is added.
     static let cloneOffset = SIMD3<Float>(0.65, 0, 0)
@@ -69,7 +74,8 @@ enum SceneConfiguration {
                 position: SIMD3(0, 0, 0.5),
                 scale: visionScale
             ),
-            color: visionColor
+            color: visionColor,
+            extendsVisionToViewport: true
         ),
     ]
 

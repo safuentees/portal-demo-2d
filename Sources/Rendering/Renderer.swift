@@ -25,6 +25,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
     private let portalPipelineState: MTLRenderPipelineState
+    private let portalClonePipelineState: MTLRenderPipelineState
     private let depthState: MTLDepthStencilState
     private let translucentDepthState: MTLDepthStencilState
     private let camera = Camera()
@@ -47,12 +48,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         for (sourceID, cloneID) in pairs {
             cloneObject(sourceID, newID: cloneID)
             updateObject(cloneID) { obj in
-                obj.color = SIMD4<Float>(
-                    94.0 / 255.0,
-                    234.0 / 255.0,
-                    212.0 / 255.0,
-                    cloneID == .coneClone ? 0.22 : 1.0
-                )
+                obj.color = cloneID == .coneClone
+                    ? SceneConfiguration.portalVisionColor
+                    : SceneConfiguration.cloneColor
             }
         }
     }
@@ -91,7 +89,8 @@ final class Renderer: NSObject, MTKViewDelegate {
                 id: configuration.id,
                 mesh: mesh,
                 placement: configuration.placement,
-                color: configuration.color
+                color: configuration.color,
+                extendsVisionToViewport: configuration.extendsVisionToViewport
             )
         }
 
@@ -101,7 +100,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         guard let vertex = library.makeFunction(name: "object_vertex"),
               let fragment = library.makeFunction(name: "object_fragment"),
-              let portalFragment = library.makeFunction(name: "portal_fragment") else {
+              let portalFragment = library.makeFunction(name: "portal_fragment"),
+              let portalCloneFragment = library.makeFunction(name: "portal_clone_fragment") else {
             throw SetupError.missingShaders
         }
         
@@ -128,6 +128,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         pipeline.rasterSampleCount = view.sampleCount
         pipelineState = try device.makeRenderPipelineState(descriptor: pipeline)
         
+        pipeline.fragmentFunction = portalCloneFragment
+        portalClonePipelineState = try device.makeRenderPipelineState(descriptor: pipeline)
+
         pipeline.fragmentFunction = portalFragment
         portalPipelineState = try device.makeRenderPipelineState(descriptor: pipeline)
 
@@ -214,7 +217,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             id: newID,
             mesh: original.mesh,
             placement: original.placement,
-            color: original.color
+            color: original.color,
+            extendsVisionToViewport: original.extendsVisionToViewport
         ))
         return true
     }
@@ -331,7 +335,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             
             encoder.setRenderPipelineState(
                     object.id == .coneClone
-                        ? portalPipelineState
+                        ? portalClonePipelineState
                         : pipelineState
                 )
             
@@ -346,8 +350,20 @@ final class Renderer: NSObject, MTKViewDelegate {
             )
 
             // 2. Supply this object's transform and color.
+            // Extend only the draw's placement so resizing never accumulates scale.
+            var placement = object.placement
+            if object.extendsVisionToViewport {
+                placement.scale = Transforms.visionScaleToCoverViewport(
+                    scale: placement.scale,
+                    eyePosition: SIMD2(placement.position.x - camera.position.x,
+                                       placement.position.y - camera.position.y),
+                    angle: placement.angle,
+                    viewportSize: SIMD2(Float(size.width), Float(size.height)),
+                    padding: Float(SceneConfiguration.canvasPadding)
+                )
+            }
             var uniforms = ShaderUniforms(
-                modelMatrix: object.modelMatrix,
+                modelMatrix: placement.modelMatrix,
                 viewMatrix: camera.viewMatrix,
                 canvasMatrix: canvasMatrix,
                 color: object.color,

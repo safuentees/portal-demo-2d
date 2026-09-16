@@ -23,4 +23,6 @@ struct SceneObjectConfiguration {
     let geometry: Geometry
     var placement = ObjectPlacement()
     var color = SIMD4<Float>(1, 1, 1, 1)
+    /// Extend this vision triangle past the visible window while keeping its angle.
+    var extendsVisionToViewport = false
 }

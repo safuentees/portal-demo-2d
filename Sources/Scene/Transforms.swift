@@ -35,6 +35,25 @@ enum Transforms {
         return scaling(SIMD3(side / size.x, side / size.y, 1))
     }
 
+    /// Move a vision triangle's far edge beyond the window without changing its opening angle.
+    /// The eye is relative to the camera; viewport size and padding use view points.
+    static func visionScaleToCoverViewport(
+        scale: SIMD3<Float>, eyePosition: SIMD2<Float>, angle: Float,
+        viewportSize: SIMD2<Float>, padding: Float
+    ) -> SIMD3<Float> {
+        let side = canvasSide(size: viewportSize, padding: padding)
+        guard viewportSize.x > 0, viewportSize.y > 0, side > 0, scale.y > 0 else { return scale }
+
+        // The full window extends beyond the padded -1...1 canvas.
+        let halfExtent = viewportSize / side
+        let forward = SIMD2<Float>(-sin(angle), cos(angle))
+        // Maximum forward distance to any window corner, plus a one-point margin.
+        let reach = simd_dot(simd_abs(forward), halfExtent)
+            - simd_dot(eyePosition, forward) + 2 / side
+        let extensionFactor = max(1, reach / scale.y)
+        return SIMD3(scale.x * extensionFactor, scale.y * extensionFactor, scale.z)
+    }
+
     /// Convert bottom-left-relative view points to the same coordinates used by objects.
     /// Padding is still usable space, so values outside -1...1 are preserved.
     static func canvasPosition(

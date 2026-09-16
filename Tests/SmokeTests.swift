@@ -93,6 +93,7 @@ struct SmokeTests {
         try checkNamedObjects(view: view, library: library)
         try checkCloning(view: view, library: library, device: device, queue: queue)
         try checkResolutionUniform(view: view, device: device, queue: queue)
+        try checkViewportVision(view: view, library: library, device: device, queue: queue)
         let renderer = try Renderer(
             view: view, library: library, sceneObjects: sceneObjects(squares: placements)
         )
@@ -177,6 +178,7 @@ struct SmokeTests {
                    "A frame must rotate directions without translating or scaling them.")
         try checkCanvasMath()
         try checkCanvasPosition()
+        try checkVisionScale()
 
         var straight = Camera()
         var diagonal = Camera()
@@ -231,6 +233,37 @@ struct SmokeTests {
         let unpadded = Transforms.squareCanvas(size: [400, 400], padding: -100)
         try expect(SIMD4<Float>(1, -1, 0.5, 1) * unpadded == SIMD4<Float>(1, -1, 0.5, 1),
                    "Negative padding must behave like zero padding.")
+    }
+
+    static func checkVisionScale() throws {
+        let base = SIMD3<Float>(0.62, 0.5, 2)
+        let size = SIMD2<Float>(900, 600)
+        let halfExtent = size / 400 // A 600-point short side minus 100 points on each side.
+        for eye: SIMD2<Float> in [[0, 0], [5, -2], [-3, 4]] {
+            for angle: Float in [0, 0.83, .pi / 2, -.pi / 2] {
+                let scale = Transforms.visionScaleToCoverViewport(
+                    scale: base, eyePosition: eye, angle: angle, viewportSize: size, padding: 100
+                )
+                try expect(scale.y >= base.y && scale.z == base.z
+                           && abs(scale.x / scale.y - base.x / base.y) < 0.0001,
+                           "Vision extension must preserve its opening angle and depth without shrinking its base scale.")
+                let forward = SIMD2<Float>(-sin(angle), cos(angle))
+                for x in [-halfExtent.x, halfExtent.x] {
+                    for y in [-halfExtent.y, halfExtent.y] {
+                        try expect(scale.y > simd_dot(SIMD2(x, y) - eye, forward),
+                                   "The vision far edge must lie beyond every viewport corner, including padding.")
+                    }
+                }
+            }
+        }
+        for size: SIMD2<Float> in [[0, 400], [400, 0], [128, 128]] {
+            try expect(Transforms.visionScaleToCoverViewport(
+                scale: base, eyePosition: .zero, angle: 0, viewportSize: size, padding: 100
+            ) == base, "Collapsed viewports must leave the stored vision shape finite and unchanged.")
+        }
+        try expect(abs(SceneConfiguration.visionScale.x / (2 * SceneConfiguration.visionScale.y)
+                       - tan(SceneConfiguration.visionFieldOfView / 2)) < 0.0001,
+                   "The configured triangle shape must match the configured field of view.")
     }
 
     static func checkObjectPlacement(device: MTLDevice) throws {
@@ -787,7 +820,10 @@ struct SmokeTests {
                                      color: SceneConfiguration.objectColor),
         ]
         let renderer = try Renderer(view: view, library: library, sceneObjects: configurations)
-        let pairs: [(SceneObjectID, SceneObjectID)] = [(.circle, .circleClone), (.cone, .coneClone)]
+        // Generic copies use custom IDs; the named cone clone intentionally has portal clipping.
+        let pairs: [(SceneObjectID, SceneObjectID)] = [
+            (.circle, .custom("circle-copy")), (.cone, .custom("cone-copy")),
+        ]
         var copiedPlacements: [ObjectPlacement] = []
         for (sourceID, cloneID) in pairs {
             try expect(renderer.object(withID: cloneID) == nil, "Injected scenes must remain clone-free until requested.")
@@ -798,7 +834,8 @@ struct SmokeTests {
             try expect(clone.id == cloneID && clone.mesh === source.mesh
                        && clone.placement.position == source.placement.position
                        && clone.placement.scale == source.placement.scale
-                       && clone.placement.angle == source.placement.angle && clone.color == source.color,
+                       && clone.placement.angle == source.placement.angle && clone.color == source.color
+                       && clone.extendsVisionToViewport == source.extendsVisionToViewport,
                        "A clone must share the exact GPU mesh and copy every editable scene property.")
             var displaced = source.placement
             displaced.position.x += 0.9
@@ -839,7 +876,8 @@ struct SmokeTests {
                         trianglePlacements: [conePlacement, copiedPlacements[1]])
 
         let startup = try Renderer(view: view, library: library)
-        for (sourceID, cloneID) in pairs {
+        let defaultPairs: [(SceneObjectID, SceneObjectID)] = [(.circle, .circleClone), (.cone, .coneClone)]
+        for (sourceID, cloneID) in defaultPairs {
             guard let source = startup.object(withID: sourceID), let clone = startup.object(withID: cloneID) else {
                 throw Failure(description: "The default renderer must create the circle and cone clones once.")
             }
@@ -847,8 +885,8 @@ struct SmokeTests {
                        && clone.placement.position == source.placement.position
                        && clone.placement.scale == source.placement.scale
                        && clone.placement.angle == source.placement.angle
-                       && clone.color == SIMD4<Float>(94.0 / 255.0, 234.0 / 255.0, 212.0 / 255.0,
-                                                      cloneID == .coneClone ? 0.22 : 1),
+                       && clone.extendsVisionToViewport == source.extendsVisionToViewport
+                       && clone.color == (cloneID == .coneClone ? SceneConfiguration.portalVisionColor : SceneConfiguration.cloneColor),
                        "Default clones must copy source placement and retain their distinct teal appearance.")
             startup.updateObject(sourceID) {
                 $0.placement.position += SIMD3<Float>(0.13, -0.17, 0)
@@ -880,7 +918,7 @@ struct SmokeTests {
         for _ in 0..<120 {
             startup.updateScene(deltaTime: 0.1)
         }
-        for (sourceID, cloneID) in pairs {
+        for (sourceID, cloneID) in defaultPairs {
             guard let source = startup.object(withID: sourceID), let clone = startup.object(withID: cloneID) else {
                 throw Failure(description: "A portal-relative source or clone is missing.")
             }
@@ -915,13 +953,13 @@ struct SmokeTests {
         let source = try String(contentsOf: shaderURL, encoding: .utf8)
         let probeSource = source
             .replacingOccurrences(of: "fragment float4 object_fragment(", with: "fragment float4 original_object_fragment(")
-            .replacingOccurrences(of: "fragment float4 portal_fragment(", with: "fragment float4 original_portal_fragment(")
+            .replacingOccurrences(of: "fragment float4 portal_clone_fragment(", with: "fragment float4 original_portal_clone_fragment(")
             + """
 
             fragment float4 object_fragment(constant ShaderUniforms &u [[buffer(1)]]) {
                 return float4(u.resolution / 2048.0, 0.0, 1.0);
             }
-            fragment float4 portal_fragment(VertexOut input [[stage_in]], constant ShaderUniforms &u [[buffer(1)]]) {
+            fragment float4 portal_clone_fragment(VertexOut input [[stage_in]], constant ShaderUniforms &u [[buffer(1)]]) {
                 return float4(u.resolution / 2048.0, 1.0, 1.0);
             }
             """
@@ -952,6 +990,97 @@ struct SmokeTests {
             }
         }
         print("PASS: drawable resolution in object/portal fragment uniforms, resize, non-square views, Retina")
+    }
+
+    @MainActor
+    static func checkViewportVision(
+        view: MTKView, library: MTLLibrary, device: MTLDevice, queue: MTLCommandQueue
+    ) throws {
+        // The reference is an infinite wedge, independent of the triangle extension helper.
+        // Portal cases express their eye in the portal's local frame.
+        let cases: [(Int, Int, CGSize?, SIMD2<Float>, Float, Bool)] = [
+            (512, 512, nil, [0, 0], 0, false),
+            (800, 400, nil, [-0.6, 0.2], -.pi / 2, false),
+            (400, 800, nil, [0.4, -0.5], 0.6, false),
+            (1024, 768, CGSize(width: 512, height: 384), [0.2, -0.1], -0.8, false),
+            (800, 400, nil, [5, 0], .pi / 2, false),
+            (400, 800, nil, [0, -5], 0, false),
+            (512, 512, nil, [0, -0.6], 0, true),
+            (800, 600, CGSize(width: 400, height: 300), [0, -0.6], 0.45, true),
+        ]
+        let color = SIMD4<Float>(0.2, 0.5, 0.9, 1)
+        let foreground = [color.z, color.y, color.x, color.w].map { Int(($0 * 255).rounded()) }
+        let background = SceneConfiguration.backgroundColor
+        let clear = [background.blue, background.green, background.red, background.alpha]
+            .map { Int(($0 * 255).rounded()) }
+        for (width, height, viewportSize, fixtureEye, angle, clipped) in cases {
+            let forward = SIMD2<Float>(-sin(angle), cos(angle))
+            let right = SIMD2<Float>(cos(angle), sin(angle))
+            let portalOrigin = SIMD2<Float>(-0.15, 0.1)
+            let eye = clipped ? portalOrigin + right * fixtureEye.x + forward * fixtureEye.y : fixtureEye
+            let id: SceneObjectID = clipped ? .coneClone : .cone
+            let placement = ObjectPlacement(position: [eye.x, eye.y, 0.5], scale: [1.24, 1, 1], angle: angle)
+            var objects = [SceneObjectConfiguration(
+                id: id, geometry: .triangle, placement: placement, color: color,
+                extendsVisionToViewport: true
+            )]
+            if clipped {
+                // Supply a portal frame without adding visible geometry to the reference image.
+                objects.append(SceneObjectConfiguration(
+                    id: .topBar, geometry: .square,
+                    placement: ObjectPlacement(position: [portalOrigin.x, portalOrigin.y, 0],
+                                               scale: [0.4, 0.035, 1], angle: angle), color: .zero
+                ))
+            }
+            let renderer = try Renderer(view: view, library: library, sceneObjects: objects)
+            let pixels = try render(renderer, device: device, queue: queue,
+                                    width: width, height: height, viewportSize: viewportSize)
+            let viewport = viewportSize ?? CGSize(width: width, height: height)
+            let size = SIMD2<Float>(Float(viewport.width), Float(viewport.height))
+            let side = min(size.x, size.y) - 2 * Float(SceneConfiguration.canvasPadding)
+            let unitsPerPixel = 2 / side * max(size.x / Float(width), size.y / Float(height))
+            let tolerance = 1.5 * unitsPerPixel
+            let tanHalfAngle: Float = 0.62
+            var edgeCoverage = 0
+            var portalRejections = 0
+            // Sample the interior and every viewport edge, including the last row/column.
+            for y in Array(stride(from: 0, to: height, by: 11)) + [height - 1] {
+                for x in Array(stride(from: 0, to: width, by: 11)) + [width - 1] {
+                    let world = SIMD2<Float>(
+                        (Float(x) + 0.5) * size.x / Float(width) - size.x / 2,
+                        size.y / 2 - (Float(y) + 0.5) * size.y / Float(height)
+                    ) * (2 / side)
+                    let delta = world - eye
+                    let along = simd_dot(delta, forward)
+                    let lateral = simd_dot(delta, right)
+                    let margin = min(along, (tanHalfAngle * along - abs(lateral))
+                                     / sqrt(1 + tanHalfAngle * tanHalfAngle))
+                    if abs(margin) < tolerance { continue }
+                    var visible = margin > 0
+                    if clipped && visible {
+                        let local = world - portalOrigin
+                        let point = SIMD2(simd_dot(local, right), simd_dot(local, forward))
+                        let dy = point.y - fixtureEye.y
+                        if abs(dy) < 0.000001 { continue }
+                        let t = -fixtureEye.y / dy
+                        let crossingX = fixtureEye.x + t * (point.x - fixtureEye.x)
+                        if abs(point.y) < tolerance || abs(abs(crossingX) - 0.2) < tolerance { continue }
+                        visible = t > 0 && t < 1 && abs(crossingX) <= 0.2
+                        if !visible { portalRejections += 1 }
+                    }
+                    let expected = visible ? foreground : clear
+                    let index = (y * width + x) * 4
+                    try expect((0..<4).allSatisfy { abs(Int(pixels[index + $0]) - expected[$0]) <= 1 },
+                               "Viewport vision mismatch at \(width)x\(height), angle \(angle), portal \(clipped), pixel (\(x), \(y)).")
+                    if visible && (x == 0 || y == 0 || x == width - 1 || y == height - 1) { edgeCoverage += 1 }
+                }
+            }
+            try expect(edgeCoverage > 0, "Vision must reach the actual viewport edge beyond the padded canvas.")
+            try expect(!clipped || portalRejections > 0, "The extended clone must still discard rays outside its portal aperture.")
+            try expect(renderer.object(withID: id)?.placement.scale == placement.scale,
+                       "Viewport extension must only affect the draw; stored placement scale must not accumulate.")
+        }
+        print("PASS: viewport-reaching vision, preserved field of view, rotated/offscreen eyes, Retina, portal aperture")
     }
 
     static func checkMeshes(device: MTLDevice) throws {

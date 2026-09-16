@@ -49,6 +49,14 @@ fragment float4 portal_fragment(
     VertexOut input [[stage_in]],
     constant ShaderUniforms &uniforms [[buffer(1)]]
 ) {
+    return float4(1.0);
+}
+
+
+fragment float4 portal_clone_fragment(
+    VertexOut input [[stage_in]],
+    constant ShaderUniforms &uniforms [[buffer(1)]]
+) {
     float2 portalPosition = (
             float4(input.worldPosition, 0.0, 1.0)
             * uniforms.worldToPortal
