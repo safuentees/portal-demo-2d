@@ -7,4 +7,6 @@ struct ShaderUniforms {
     var viewMatrix: simd_float4x4
     var canvasMatrix: simd_float4x4
     var color: SIMD4<Float>
+    var worldToPortal = matrix_identity_float4x4
+    var eyeInPortal = SIMD4<Float>.zero
 }

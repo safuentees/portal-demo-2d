@@ -37,7 +37,7 @@ enum SceneConfiguration {
             id: .bottomBar,
             geometry: .square,
             placement: ObjectPlacement(
-                position: SIMD3(0.9 - (0.4 / 2), -0.9, 0),
+                position: SIMD3(0.5 - (0.4 / 2), -0.9, 0),
                 scale: SIMD3(0.4, 0.035, 1)
             ),
             color: objectColor
@@ -47,7 +47,8 @@ enum SceneConfiguration {
             geometry: .square,
             placement: ObjectPlacement(
                 position: SIMD3(-0.9 + (0.4 / 2), 0.9, 0),
-                scale: SIMD3(0.4, 0.035, 1)
+                scale: SIMD3(0.4, 0.035, 1),
+                angle: .pi
             ),
             color: objectColor
         ),

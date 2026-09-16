@@ -15,6 +15,8 @@ struct ShaderUniforms {
     float4x4 viewMatrix;
     float4x4 canvasMatrix;
     float4 color;
+    float4x4 worldToPortal;
+    float4 eyeInPortal;
 };
 
 vertex VertexOut object_vertex(
@@ -32,5 +34,16 @@ vertex VertexOut object_vertex(
 }
 
 fragment float4 object_fragment(constant ShaderUniforms &uniforms [[buffer(1)]]) {
+    return uniforms.color;
+}
+
+fragment float4 portal_fragment(
+    VertexOut input [[stage_in]],
+    constant ShaderUniforms &uniforms [[buffer(1)]]
+) {
+    float2 pixelPosition = input.position.xy ;
+    
+
+    // Replace this with your clipping logic later.
     return uniforms.color;
 }

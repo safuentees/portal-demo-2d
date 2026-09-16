@@ -24,6 +24,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var objects: [RenderObject] = []
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
+    private let portalPipelineState: MTLRenderPipelineState
     private let depthState: MTLDepthStencilState
     private let translucentDepthState: MTLDepthStencilState
     private let camera = Camera()
@@ -45,6 +46,14 @@ final class Renderer: NSObject, MTKViewDelegate {
         ]
         for (sourceID, cloneID) in pairs {
             cloneObject(sourceID, newID: cloneID)
+            updateObject(cloneID) { obj in
+                obj.color = SIMD4<Float>(
+                    94.0 / 255.0,
+                    234.0 / 255.0,
+                    212.0 / 255.0,
+                    cloneID == .coneClone ? 0.22 : 1.0
+                )
+            }
         }
     }
 
@@ -91,9 +100,11 @@ final class Renderer: NSObject, MTKViewDelegate {
             throw SetupError.missingLibrary
         }
         guard let vertex = library.makeFunction(name: "object_vertex"),
-              let fragment = library.makeFunction(name: "object_fragment") else {
+              let fragment = library.makeFunction(name: "object_fragment"),
+              let portalFragment = library.makeFunction(name: "portal_fragment") else {
             throw SetupError.missingShaders
         }
+        
         // All flat meshes use this layout; the pipeline does not belong to one shape.
         guard let vertexDescriptor = MTKMetalVertexDescriptorFromModelIO(Mesh2D.makeVertexDescriptor()) else {
             throw SetupError.invalidVertexDescriptor
@@ -116,6 +127,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         pipeline.depthAttachmentPixelFormat = view.depthStencilPixelFormat
         pipeline.rasterSampleCount = view.sampleCount
         pipelineState = try device.makeRenderPipelineState(descriptor: pipeline)
+        
+        pipeline.fragmentFunction = portalFragment
+        portalPipelineState = try device.makeRenderPipelineState(descriptor: pipeline)
 
         let depth = MTLDepthStencilDescriptor()
         depth.label = "Object depth test"
@@ -243,12 +257,18 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
         }
 
-        guard let portal = object(withID: .bottomBar) else { return }
+        guard let bottomPortal = object(withID: .bottomBar) else { return }
+        guard let topPortal = object(withID: .topBar) else { return }
+
         // The portal's coordinate frame excludes its visual width and thickness.
-        let portalFrame = Transforms.frame(
-            position: portal.placement.position, angle: portal.placement.angle
+        let bottomPortalFrame = Transforms.frame(
+            position: bottomPortal.placement.position, angle: bottomPortal.placement.angle
         )
-        let inverseFrame = simd_inverse(portalFrame)
+        let topPortalFrame = Transforms.frame(
+            position: topPortal.placement.position, angle: topPortal.placement.angle
+        )
+        
+        let inverseFrame = simd_inverse(bottomPortalFrame)
         let pairs: [(SceneObjectID, SceneObjectID)] = [
             (.circle, .circleClone), (.cone, .coneClone),
         ]
@@ -256,15 +276,17 @@ final class Renderer: NSObject, MTKViewDelegate {
             guard let source = object(withID: sourceID) else { continue }
             // Display the portal-local position. Always start from the original.
             let relativePosition = SIMD4<Float>(source.placement.position, 1) * inverseFrame
+            
+            let position = relativePosition * topPortalFrame
 
             let direction = SIMD4<Float>(cos(source.placement.angle), sin(source.placement.angle), 0, 0)
             let relativeDirection = direction * inverseFrame
             // Return the direction to world space to preserve the original heading.
-            let worldDirection = relativeDirection * portalFrame
+            let worldDirection = relativeDirection * topPortalFrame
 
             updateObject(cloneID) { clone in
                 clone.placement = ObjectPlacement(
-                    position: SIMD3<Float>(relativePosition.x, relativePosition.y, relativePosition.z),
+                    position: SIMD3<Float>(position.x, position.y, position.z),
                     scale: source.placement.scale,
                     angle: atan2(worldDirection.y, worldDirection.x)
                 )
@@ -286,7 +308,6 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
 
         encoder.label = "Draw all objects"
-        encoder.setRenderPipelineState(pipelineState)
 
         // Use view points for padding; drawable pixels may be doubled on Retina.
         // Offscreen callers default to one pixel per point unless they supply a viewport.
@@ -295,6 +316,9 @@ final class Renderer: NSObject, MTKViewDelegate {
             size: SIMD2(Float(size.width), Float(size.height)),
             padding: Float(SceneConfiguration.canvasPadding)
         )
+        
+        guard let topPortal = object(withID: .topBar) else { return false }
+        let topPortalMatrix = Transforms.frame(position: topPortal.placement.position, angle: topPortal.placement.angle)
 
         // Solid objects establish depth first. Blend translucent fields back to front.
         let opaqueObjects = objects.filter { $0.color.w >= 1 }
@@ -302,6 +326,13 @@ final class Renderer: NSObject, MTKViewDelegate {
             $0.placement.position.z > $1.placement.position.z
         }
         for object in opaqueObjects + translucentObjects {
+            
+            encoder.setRenderPipelineState(
+                    object.id == .coneClone
+                        ? portalPipelineState
+                        : pipelineState
+                )
+            
             encoder.setDepthStencilState(object.color.w >= 1 ? depthState : translucentDepthState)
             // 1. Select this object's geometry.
             let vertexBuffer = object.mesh.vertexBuffers[0]
@@ -317,7 +348,9 @@ final class Renderer: NSObject, MTKViewDelegate {
                 modelMatrix: object.modelMatrix,
                 viewMatrix: camera.viewMatrix,
                 canvasMatrix: canvasMatrix,
-                color: object.color
+                color: object.color,
+                worldToPortal: simd_inverse(topPortalMatrix),
+                eyeInPortal: topPortalMatrix * SIMD4(object.placement.position, 1.0)
             )
 
             encoder.setVertexBytes(
