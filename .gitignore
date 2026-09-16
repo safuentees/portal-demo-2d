@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+
+# Local build outputs
+DerivedData/
+.build/
+build/
+*.xcarchive
+*.dSYM/

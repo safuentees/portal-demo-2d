@@ -1,0 +1,348 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		000000000000000000000100 /* MetslStarterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000200 /* MetslStarterApp.swift */; };
+		000000000000000000000101 /* MetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000201 /* MetalView.swift */; };
+		000000000000000000000102 /* KeyboardMetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000202 /* KeyboardMetalView.swift */; };
+		000000000000000000000103 /* SceneConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000203 /* SceneConfiguration.swift */; };
+		000000000000000000000104 /* Camera.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000204 /* Camera.swift */; };
+		000000000000000000000105 /* Transforms.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000205 /* Transforms.swift */; };
+		000000000000000000000106 /* Renderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000206 /* Renderer.swift */; };
+		000000000000000000000107 /* SphereMesh.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000207 /* SphereMesh.swift */; };
+		000000000000000000000108 /* ShaderUniforms.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000208 /* ShaderUniforms.swift */; };
+		000000000000000000000109 /* Shaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000209 /* Shaders.metal */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		000000000000000000000200 /* MetslStarterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetslStarterApp.swift; sourceTree = "<group>"; };
+		000000000000000000000201 /* MetalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalView.swift; sourceTree = "<group>"; };
+		000000000000000000000202 /* KeyboardMetalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardMetalView.swift; sourceTree = "<group>"; };
+		000000000000000000000203 /* SceneConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneConfiguration.swift; sourceTree = "<group>"; };
+		000000000000000000000204 /* Camera.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Camera.swift; sourceTree = "<group>"; };
+		000000000000000000000205 /* Transforms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transforms.swift; sourceTree = "<group>"; };
+		000000000000000000000206 /* Renderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Renderer.swift; sourceTree = "<group>"; };
+		000000000000000000000207 /* SphereMesh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SphereMesh.swift; sourceTree = "<group>"; };
+		000000000000000000000208 /* ShaderUniforms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShaderUniforms.swift; sourceTree = "<group>"; };
+		000000000000000000000209 /* Shaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Shaders.metal; sourceTree = "<group>"; };
+		000000000000000000000015 /* MetslStarter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MetslStarter.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000220 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		000000000000000000000221 /* SmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeTests.swift; sourceTree = "<group>"; };
+		000000000000000000000222 /* check.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = check.sh; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		000000000000000000000032 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		000000000000000000000021 = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000022 /* Sources */,
+				000000000000000000000306 /* Tests */,
+				000000000000000000000307 /* Scripts */,
+				000000000000000000000220 /* README.md */,
+				000000000000000000000023 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		000000000000000000000022 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000300 /* App */,
+				000000000000000000000301 /* Views */,
+				000000000000000000000302 /* Input */,
+				000000000000000000000303 /* Scene */,
+				000000000000000000000304 /* Rendering */,
+				000000000000000000000305 /* Shaders */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		000000000000000000000300 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000200 /* MetslStarterApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		000000000000000000000301 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000201 /* MetalView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		000000000000000000000302 /* Input */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000202 /* KeyboardMetalView.swift */,
+			);
+			path = Input;
+			sourceTree = "<group>";
+		};
+		000000000000000000000303 /* Scene */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000203 /* SceneConfiguration.swift */,
+				000000000000000000000204 /* Camera.swift */,
+				000000000000000000000205 /* Transforms.swift */,
+			);
+			path = Scene;
+			sourceTree = "<group>";
+		};
+		000000000000000000000304 /* Rendering */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000206 /* Renderer.swift */,
+				000000000000000000000207 /* SphereMesh.swift */,
+				000000000000000000000208 /* ShaderUniforms.swift */,
+			);
+			path = Rendering;
+			sourceTree = "<group>";
+		};
+		000000000000000000000305 /* Shaders */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000209 /* Shaders.metal */,
+			);
+			path = Shaders;
+			sourceTree = "<group>";
+		};
+		000000000000000000000306 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000221 /* SmokeTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		000000000000000000000307 /* Scripts */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000222 /* check.sh */,
+			);
+			path = Scripts;
+			sourceTree = "<group>";
+		};
+		000000000000000000000023 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000015 /* MetslStarter.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		000000000000000000000041 /* MetslStarter */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000072 /* Build configuration list for PBXNativeTarget "MetslStarter" */;
+			buildPhases = (
+				000000000000000000000031 /* Sources */,
+				000000000000000000000032 /* Frameworks */,
+				000000000000000000000033 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MetslStarter;
+			productName = MetslStarter;
+			productReference = 000000000000000000000015 /* MetslStarter.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		000000000000000000000051 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					000000000000000000000041 = {
+						CreatedOnToolsVersion = 27.0;
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = 000000000000000000000071 /* Build configuration list for PBXProject "MetslStarter" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 000000000000000000000021;
+			productRefGroup = 000000000000000000000023 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				000000000000000000000041 /* MetslStarter */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		000000000000000000000033 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		000000000000000000000031 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				000000000000000000000100 /* MetslStarterApp.swift in Sources */,
+				000000000000000000000101 /* MetalView.swift in Sources */,
+				000000000000000000000102 /* KeyboardMetalView.swift in Sources */,
+				000000000000000000000103 /* SceneConfiguration.swift in Sources */,
+				000000000000000000000104 /* Camera.swift in Sources */,
+				000000000000000000000105 /* Transforms.swift in Sources */,
+				000000000000000000000106 /* Renderer.swift in Sources */,
+				000000000000000000000107 /* SphereMesh.swift in Sources */,
+				000000000000000000000108 /* ShaderUniforms.swift in Sources */,
+				000000000000000000000109 /* Shaders.metal in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		000000000000000000000061 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		000000000000000000000062 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		000000000000000000000063 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = MetslStarter;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.metslstarter;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		000000000000000000000064 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = MetslStarter;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.metslstarter;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		000000000000000000000071 /* Build configuration list for PBXProject "MetslStarter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000061 /* Debug */,
+				000000000000000000000062 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000072 /* Build configuration list for PBXNativeTarget "MetslStarter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000063 /* Debug */,
+				000000000000000000000064 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 000000000000000000000051 /* Project object */;
+}
