@@ -352,7 +352,8 @@ final class Renderer: NSObject, MTKViewDelegate {
                 canvasMatrix: canvasMatrix,
                 color: object.color,
                 worldToPortal: simd_inverse(topPortalMatrix),
-                eyeInPortal: topPortalMatrix * SIMD4(object.placement.position, 1.0),
+                eyeInPortal: SIMD4<Float>(object.placement.position, 1)
+                    * simd_inverse(topPortalMatrix),
                 resolution: SIMD2(Float(drawableSize.width), Float(drawableSize.height))
             )
 

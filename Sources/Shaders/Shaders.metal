@@ -7,6 +7,7 @@ struct VertexIn {
 
 struct VertexOut {
     float4 position [[position]];
+    float2 worldPosition;
 };
 
 // Match the field order and types in Rendering/ShaderUniforms.swift.
@@ -31,6 +32,12 @@ vertex VertexOut object_vertex(
         * uniforms.modelMatrix
         * uniforms.viewMatrix
         * uniforms.canvasMatrix;
+    
+    float4 world = float4(input.position, 0.0, 1.0)
+        * uniforms.modelMatrix;
+
+    out.worldPosition = world.xy;
+    
     return out;
 }
 
@@ -42,9 +49,28 @@ fragment float4 portal_fragment(
     VertexOut input [[stage_in]],
     constant ShaderUniforms &uniforms [[buffer(1)]]
 ) {
-    float2 pixelPosition = input.position.xy;
+    float2 portalPosition = (
+            float4(input.worldPosition, 0.0, 1.0)
+            * uniforms.worldToPortal
+        ).xy;
+    
+    float portalHalfWidth = 0.2;
 
-    // pixelPosition / uniforms.resolution gives 0...1 coordinates across the drawable.
-    // Replace this with your clipping logic later.
+    float2 A = uniforms.eyeInPortal.xy;
+    float2 B = portalPosition;
+
+    float dy = B.y - A.y;
+
+    // Avoid division by zero for a parallel segment.
+    if (abs(dy) < 0.000001)
+        discard_fragment();
+
+    float t = -A.y / dy;
+    float x = A.x + t * (B.x - A.x);
+
+    // Keep only pixels whose sightline crosses the portal opening.
+    if (t >= 1.0 or t <= 0 or abs(x) > portalHalfWidth)
+        discard_fragment();
+
     return uniforms.color;
 }
