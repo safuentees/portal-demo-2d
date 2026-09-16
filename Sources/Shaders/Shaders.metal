@@ -17,6 +17,7 @@ struct ShaderUniforms {
     float4 color;
     float4x4 worldToPortal;
     float4 eyeInPortal;
+    float2 resolution;
 };
 
 vertex VertexOut object_vertex(
@@ -41,9 +42,9 @@ fragment float4 portal_fragment(
     VertexOut input [[stage_in]],
     constant ShaderUniforms &uniforms [[buffer(1)]]
 ) {
-    float2 pixelPosition = input.position.xy ;
-    
+    float2 pixelPosition = input.position.xy;
 
+    // pixelPosition / uniforms.resolution gives 0...1 coordinates across the drawable.
     // Replace this with your clipping logic later.
     return uniforms.color;
 }

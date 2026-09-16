@@ -317,8 +317,10 @@ final class Renderer: NSObject, MTKViewDelegate {
             padding: Float(SceneConfiguration.canvasPadding)
         )
         
-        guard let topPortal = object(withID: .topBar) else { return false }
-        let topPortalMatrix = Transforms.frame(position: topPortal.placement.position, angle: topPortal.placement.angle)
+        // Scenes without a portal can still draw using an identity portal frame.
+        let topPortalMatrix = object(withID: .topBar).map { portal in
+            Transforms.frame(position: portal.placement.position, angle: portal.placement.angle)
+        } ?? matrix_identity_float4x4
 
         // Solid objects establish depth first. Blend translucent fields back to front.
         let opaqueObjects = objects.filter { $0.color.w >= 1 }
@@ -350,7 +352,8 @@ final class Renderer: NSObject, MTKViewDelegate {
                 canvasMatrix: canvasMatrix,
                 color: object.color,
                 worldToPortal: simd_inverse(topPortalMatrix),
-                eyeInPortal: topPortalMatrix * SIMD4(object.placement.position, 1.0)
+                eyeInPortal: topPortalMatrix * SIMD4(object.placement.position, 1.0),
+                resolution: SIMD2(Float(drawableSize.width), Float(drawableSize.height))
             )
 
             encoder.setVertexBytes(

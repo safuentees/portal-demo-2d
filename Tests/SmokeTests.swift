@@ -92,6 +92,7 @@ struct SmokeTests {
         try checkMeshes(device: device)
         try checkNamedObjects(view: view, library: library)
         try checkCloning(view: view, library: library, device: device, queue: queue)
+        try checkResolutionUniform(view: view, device: device, queue: queue)
         let renderer = try Renderer(
             view: view, library: library, sceneObjects: sceneObjects(squares: placements)
         )
@@ -190,11 +191,18 @@ struct SmokeTests {
         paused.update(direction: [0, 0, 1], deltaTime: 100)
         try expect(abs(paused.position.z - SceneConfiguration.cameraSpeed * 0.1) < 0.0001,
                    "A debugger pause must not cause a camera jump.")
-        try expect(MemoryLayout<ShaderUniforms>.stride == 208, "Swift/Metal uniform stride changed.")
+        try expect(MemoryLayout<ShaderUniforms>.size == 296
+                   && MemoryLayout<ShaderUniforms>.stride == 304
+                   && MemoryLayout<ShaderUniforms>.alignment == 16,
+                   "Swift/Metal uniforms must include the appended resolution with 16-byte struct alignment.")
         try expect(MemoryLayout<ShaderUniforms>.offset(of: \.canvasMatrix) == 128,
                    "Swift/Metal uniform canvas matrix offset changed.")
         try expect(MemoryLayout<ShaderUniforms>.offset(of: \.color) == 192,
                    "Swift/Metal uniform color offset changed.")
+        try expect(MemoryLayout<ShaderUniforms>.offset(of: \.worldToPortal) == 208
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.eyeInPortal) == 272
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.resolution) == 288,
+                   "Swift/Metal portal and drawable-resolution field offsets must match.")
     }
 
     static func checkCanvasMath() throws {
@@ -838,8 +846,10 @@ struct SmokeTests {
             try expect(clone.mesh === source.mesh
                        && clone.placement.position == source.placement.position
                        && clone.placement.scale == source.placement.scale
-                       && clone.placement.angle == source.placement.angle && clone.color == source.color,
-                       "Default clones must initially copy their sources before the scene update.")
+                       && clone.placement.angle == source.placement.angle
+                       && clone.color == SIMD4<Float>(94.0 / 255.0, 234.0 / 255.0, 212.0 / 255.0,
+                                                      cloneID == .coneClone ? 0.22 : 1),
+                       "Default clones must copy source placement and retain their distinct teal appearance.")
             startup.updateObject(sourceID) {
                 $0.placement.position += SIMD3<Float>(0.13, -0.17, 0)
                 $0.placement.angle = 1.1
@@ -851,10 +861,19 @@ struct SmokeTests {
         }
         let referencePortal = ObjectPlacement(position: [0.3, -0.2, 0], scale: [0.4, 0.035, 1], angle: 0.73)
         startup.updateObject(.bottomBar) { $0.placement = referencePortal }
-        func expectedRelativePosition(_ position: SIMD3<Float>) -> SIMD3<Float> {
+        guard let destinationPortal = startup.object(withID: .topBar)?.placement else {
+            throw Failure(description: "The default scene must contain its destination portal.")
+        }
+        func expectedMappedPosition(_ position: SIMD3<Float>) -> SIMD3<Float> {
             let offset = position - referencePortal.position
             let c = cos(referencePortal.angle), s = sin(referencePortal.angle)
-            return [offset.x * c + offset.y * s, -offset.x * s + offset.y * c, offset.z]
+            let local = SIMD3<Float>(offset.x * c + offset.y * s, -offset.x * s + offset.y * c, offset.z)
+            let destinationCos = cos(destinationPortal.angle), destinationSin = sin(destinationPortal.angle)
+            return destinationPortal.position + SIMD3<Float>(
+                local.x * destinationCos - local.y * destinationSin,
+                local.x * destinationSin + local.y * destinationCos,
+                local.z
+            )
         }
         startup.updateScene()
         let before = try render(startup, device: device, queue: queue, width: 512, height: 512)
@@ -866,16 +885,17 @@ struct SmokeTests {
                 throw Failure(description: "A portal-relative source or clone is missing.")
             }
             var expectedPlacement = source.placement
-            expectedPlacement.position = expectedRelativePosition(source.placement.position)
+            expectedPlacement.position = expectedMappedPosition(source.placement.position)
+            expectedPlacement.angle = source.placement.angle - referencePortal.angle + destinationPortal.angle
             for column in 0..<4 {
                 try expect(simd_distance(expectedPlacement.modelMatrix[column], clone.modelMatrix[column]) < 0.00001,
-                           "Clones must display portal-local positions while preserving source scale and world orientation without drift.")
+                           "Clones must map through the bottom portal into the top portal, preserving source scale without drift.")
             }
             startup.updateObject(sourceID) { $0.placement.position.x += 0.1 }
             startup.updateScene()
             let currentSource = startup.object(withID: sourceID)!
             let currentClone = startup.object(withID: cloneID)!
-            try expect(simd_distance(expectedRelativePosition(currentSource.placement.position),
+            try expect(simd_distance(expectedMappedPosition(currentSource.placement.position),
                                      currentClone.placement.position) < 0.00001,
                        "Clones must read their original's current position even without a mouse event.")
             startup.updateObject(sourceID) { $0.placement.position = source.placement.position }
@@ -883,7 +903,55 @@ struct SmokeTests {
         }
         let after = try render(startup, device: device, queue: queue, width: 512, height: 512)
         try expect(before == after, "Repeated portal-relative updates must produce stable pixels without flickering.")
-        print("PASS: shared-mesh clones, independent copies, rejected IDs, GPU duplicates, stable portal-relative display")
+        print("PASS: shared-mesh clones, independent copies, rejected IDs, GPU duplicates, stable portal mapping")
+    }
+
+    @MainActor
+    static func checkResolutionUniform(view: MTKView, device: MTLDevice, queue: MTLCommandQueue) throws {
+        // Reuse the real vertex shader and Metal uniform layout; only the fragment
+        // result changes so GPU readback can observe the supplied resolution.
+        let shaderURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/Shaders/Shaders.metal")
+        let source = try String(contentsOf: shaderURL, encoding: .utf8)
+        let probeSource = source
+            .replacingOccurrences(of: "fragment float4 object_fragment(", with: "fragment float4 original_object_fragment(")
+            .replacingOccurrences(of: "fragment float4 portal_fragment(", with: "fragment float4 original_portal_fragment(")
+            + """
+
+            fragment float4 object_fragment(constant ShaderUniforms &u [[buffer(1)]]) {
+                return float4(u.resolution / 2048.0, 0.0, 1.0);
+            }
+            fragment float4 portal_fragment(VertexOut input [[stage_in]], constant ShaderUniforms &u [[buffer(1)]]) {
+                return float4(u.resolution / 2048.0, 1.0, 1.0);
+            }
+            """
+        let library = try device.makeLibrary(source: probeSource, options: nil)
+        let objects = [
+            SceneObjectConfiguration(id: .custom("resolution-object"), geometry: .square,
+                                     placement: ObjectPlacement(position: [-0.45, 0, 0], scale: [0.5, 0.5, 1])),
+            SceneObjectConfiguration(id: .coneClone, geometry: .square,
+                                     placement: ObjectPlacement(position: [0.45, 0, 0], scale: [0.5, 0.5, 1])),
+        ]
+        let renderer = try Renderer(view: view, library: library, sceneObjects: objects)
+        let viewports: [(Int, Int, CGSize?)] = [
+            (512, 384, nil), (800, 400, nil), (400, 800, nil),
+            (1024, 768, CGSize(width: 512, height: 384)),
+        ]
+        for (width, height, viewportSize) in viewports {
+            let pixels = try render(renderer, device: device, queue: queue,
+                                    width: width, height: height, viewportSize: viewportSize)
+            let viewport = viewportSize ?? CGSize(width: width, height: height)
+            let side = min(viewport.width, viewport.height) - 2 * SceneConfiguration.canvasPadding
+            for (index, xPosition): (Int, CGFloat) in [(0, -0.45), (1, 0.45)] {
+                let x = Int((viewport.width / 2 + xPosition * side / 2) * CGFloat(width) / viewport.width)
+                let pixel = (height / 2 * width + x) * 4
+                let expected = [index * 255, Int((Float(height) / 2048 * 255).rounded()),
+                                Int((Float(width) / 2048 * 255).rounded()), 255]
+                try expect((0..<4).allSatisfy { abs(Int(pixels[pixel + $0]) - expected[$0]) <= 1 },
+                           "Both fragment pipelines must receive current drawable pixels, including resize and Retina.")
+            }
+        }
+        print("PASS: drawable resolution in object/portal fragment uniforms, resize, non-square views, Retina")
     }
 
     static func checkMeshes(device: MTLDevice) throws {
