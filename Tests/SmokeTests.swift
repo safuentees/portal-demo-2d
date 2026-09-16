@@ -165,6 +165,15 @@ struct SmokeTests {
         let homogeneous = SIMD4<Float>(3, -2, 5, 7) * Transforms.rotation(0.71)
         try expect(homogeneous.z == 5 && homogeneous.w == 7,
                    "Planar rotation must preserve depth and homogeneous W.")
+        let frame = Transforms.frame(position: [5, 3, 0.2], angle: .pi / 2)
+        let localPoint = SIMD4<Float>(2, 1, 0.3, 1)
+        let worldPoint = SIMD4<Float>(4, 5, 0.5, 1)
+        try expect(simd_distance(localPoint * frame, worldPoint) < 0.0001,
+                   "A frame must rotate local coordinates before placing them in world space.")
+        try expect(simd_distance(worldPoint * simd_inverse(frame), localPoint) < 0.0001,
+                   "An inverse frame must recover the point's local coordinates.")
+        try expect(simd_distance(SIMD4<Float>(1, 0, 0, 0) * frame, SIMD4<Float>(0, 1, 0, 0)) < 0.0001,
+                   "A frame must rotate directions without translating or scaling them.")
         try checkCanvasMath()
         try checkCanvasPosition()
 
@@ -830,7 +839,7 @@ struct SmokeTests {
                        && clone.placement.position == source.placement.position
                        && clone.placement.scale == source.placement.scale
                        && clone.placement.angle == source.placement.angle && clone.color == source.color,
-                       "Default clones must initially overlap their sources for the portal round trip.")
+                       "Default clones must initially copy their sources before the scene update.")
             startup.updateObject(sourceID) {
                 $0.placement.position += SIMD3<Float>(0.13, -0.17, 0)
                 $0.placement.angle = 1.1
@@ -840,10 +849,12 @@ struct SmokeTests {
                 $0.placement.angle = -2
             }
         }
-        startup.updateObject(.bottomBar) {
-            $0.placement.position = [0.3, -0.2, 0]
-            $0.placement.angle = 0.73
-            $0.placement.scale = [0.4, 0.035, 1]
+        let referencePortal = ObjectPlacement(position: [0.3, -0.2, 0], scale: [0.4, 0.035, 1], angle: 0.73)
+        startup.updateObject(.bottomBar) { $0.placement = referencePortal }
+        func expectedRelativePosition(_ position: SIMD3<Float>) -> SIMD3<Float> {
+            let offset = position - referencePortal.position
+            let c = cos(referencePortal.angle), s = sin(referencePortal.angle)
+            return [offset.x * c + offset.y * s, -offset.x * s + offset.y * c, offset.z]
         }
         startup.updateScene()
         let before = try render(startup, device: device, queue: queue, width: 512, height: 512)
@@ -852,24 +863,27 @@ struct SmokeTests {
         }
         for (sourceID, cloneID) in pairs {
             guard let source = startup.object(withID: sourceID), let clone = startup.object(withID: cloneID) else {
-                throw Failure(description: "A portal round-trip source or clone is missing.")
+                throw Failure(description: "A portal-relative source or clone is missing.")
             }
+            var expectedPlacement = source.placement
+            expectedPlacement.position = expectedRelativePosition(source.placement.position)
             for column in 0..<4 {
-                try expect(simd_distance(source.modelMatrix[column], clone.modelMatrix[column]) < 0.00001,
-                           "Portal-local conversion and return must preserve position, scale, and orientation without drift.")
+                try expect(simd_distance(expectedPlacement.modelMatrix[column], clone.modelMatrix[column]) < 0.00001,
+                           "Clones must display portal-local positions while preserving source scale and world orientation without drift.")
             }
             startup.updateObject(sourceID) { $0.placement.position.x += 0.1 }
             startup.updateScene()
             let currentSource = startup.object(withID: sourceID)!
             let currentClone = startup.object(withID: cloneID)!
-            try expect(simd_distance(currentSource.placement.position, currentClone.placement.position) < 0.00001,
+            try expect(simd_distance(expectedRelativePosition(currentSource.placement.position),
+                                     currentClone.placement.position) < 0.00001,
                        "Clones must read their original's current position even without a mouse event.")
             startup.updateObject(sourceID) { $0.placement.position = source.placement.position }
             startup.updateScene()
         }
         let after = try render(startup, device: device, queue: queue, width: 512, height: 512)
-        try expect(before == after, "Repeated portal round trips must produce stable pixels without flickering.")
-        print("PASS: shared-mesh clones, independent copies, rejected IDs, GPU duplicates, stable portal round trip")
+        try expect(before == after, "Repeated portal-relative updates must produce stable pixels without flickering.")
+        print("PASS: shared-mesh clones, independent copies, rejected IDs, GPU duplicates, stable portal-relative display")
     }
 
     static func checkMeshes(device: MTLDevice) throws {

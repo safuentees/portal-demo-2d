@@ -245,25 +245,26 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         guard let portal = object(withID: .bottomBar) else { return }
         // The portal's coordinate frame excludes its visual width and thickness.
-        let portalFrame = Transforms.rotation(portal.placement.angle)
-            * Transforms.translation(portal.placement.position)
+        let portalFrame = Transforms.frame(
+            position: portal.placement.position, angle: portal.placement.angle
+        )
         let inverseFrame = simd_inverse(portalFrame)
         let pairs: [(SceneObjectID, SceneObjectID)] = [
             (.circle, .circleClone), (.cone, .coneClone),
         ]
         for (sourceID, cloneID) in pairs {
             guard let source = object(withID: sourceID) else { continue }
-            // World -> portal-local -> world. Always start from the original.
+            // Display the portal-local position. Always start from the original.
             let relativePosition = SIMD4<Float>(source.placement.position, 1) * inverseFrame
-            let worldPosition = relativePosition 
 
             let direction = SIMD4<Float>(cos(source.placement.angle), sin(source.placement.angle), 0, 0)
             let relativeDirection = direction * inverseFrame
+            // Return the direction to world space to preserve the original heading.
             let worldDirection = relativeDirection * portalFrame
 
             updateObject(cloneID) { clone in
                 clone.placement = ObjectPlacement(
-                    position: SIMD3<Float>(worldPosition.x, worldPosition.y, worldPosition.z),
+                    position: SIMD3<Float>(relativePosition.x, relativePosition.y, relativePosition.z),
                     scale: source.placement.scale,
                     angle: atan2(worldDirection.y, worldDirection.x)
                 )

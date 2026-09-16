@@ -9,6 +9,6 @@ struct ObjectPlacement {
 
     var modelMatrix: simd_float4x4 {
         // Row vectors: scale, rotate around the mesh origin, then move into place.
-        Transforms.scaling(scale) * Transforms.rotation(angle) * Transforms.translation(position)
+        Transforms.scaling(scale) * Transforms.frame(position: position, angle: angle)
     }
 }

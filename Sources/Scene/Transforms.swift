@@ -19,6 +19,11 @@ enum Transforms {
         ))
     }
 
+    /// A local-to-world frame: rotate, then translate. Angle is in radians; scale is excluded.
+    static func frame(position: SIMD3<Float>, angle: Float) -> simd_float4x4 {
+        rotation(angle) * translation(position)
+    }
+
     /// Fit the logical -1...1 square inside a padded view, centered on the origin.
     /// Size and padding share the same units (points for the onscreen view).
     static func squareCanvas(size: SIMD2<Float>, padding: Float) -> simd_float4x4 {
