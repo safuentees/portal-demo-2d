@@ -2,7 +2,7 @@
 using namespace metal;
 
 struct VertexIn {
-    float3 position [[attribute(0)]];
+    float2 position [[attribute(0)]];
 };
 
 struct VertexOut {
@@ -13,23 +13,24 @@ struct VertexOut {
 struct ShaderUniforms {
     float4x4 modelMatrix;
     float4x4 viewMatrix;
-    float4x4 projectionMatrix;
+    float4x4 canvasMatrix;
     float4 color;
 };
 
-vertex VertexOut sphere_vertex(
+vertex VertexOut object_vertex(
     VertexIn input [[stage_in]],
     constant ShaderUniforms &uniforms [[buffer(1)]]
 ) {
     VertexOut out;
-    // Same row-vector convention as metsl. The camera looks along +Z.
-    out.position = float4(input.position, 1.0)
+    // Fit the flat square canvas into the padded window using x/y scaling only.
+    // No perspective: depth never changes an object's apparent size.
+    out.position = float4(input.position, 0.0, 1.0)
         * uniforms.modelMatrix
         * uniforms.viewMatrix
-        * uniforms.projectionMatrix;
+        * uniforms.canvasMatrix;
     return out;
 }
 
-fragment float4 sphere_fragment(constant ShaderUniforms &uniforms [[buffer(1)]]) {
+fragment float4 object_fragment(constant ShaderUniforms &uniforms [[buffer(1)]]) {
     return uniforms.color;
 }

@@ -1,8 +1,23 @@
 import simd
 
 /// Matches metsl: row vectors, +Z forward, and Metal depth in the 0...1 range.
-/// Shaders multiply position * model * view * projection.
+/// The flat scene uses position * model * view * canvas, with no perspective.
 enum Transforms {
+    static func scaling(_ scale: SIMD3<Float>) -> simd_float4x4 {
+        simd_float4x4(diagonal: SIMD4<Float>(scale.x, scale.y, scale.z, 1))
+    }
+
+    /// Fit the logical -1...1 square inside a padded view, centered on the origin.
+    /// Size and padding share the same units (points for the onscreen view).
+    static func squareCanvas(size: SIMD2<Float>, padding: Float) -> simd_float4x4 {
+        guard size.x > 0, size.y > 0 else {
+            return scaling(SIMD3(0, 0, 1))
+        }
+        let side = max(min(size.x, size.y) - 2 * max(padding, 0), 0)
+        // Only x/y change. Depth and w stay unchanged, so there is no perspective.
+        return scaling(SIMD3(side / size.x, side / size.y, 1))
+    }
+
     static func translation(_ offset: SIMD3<Float>) -> simd_float4x4 {
         simd_float4x4(columns: (
             SIMD4<Float>(1, 0, 0, offset.x),

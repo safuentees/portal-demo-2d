@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 70;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -14,12 +14,14 @@
 		000000000000000000000104 /* Camera.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000204 /* Camera.swift */; };
 		000000000000000000000105 /* Transforms.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000205 /* Transforms.swift */; };
 		000000000000000000000106 /* Renderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000206 /* Renderer.swift */; };
-		000000000000000000000107 /* SphereMesh.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000207 /* SphereMesh.swift */; };
 		000000000000000000000108 /* ShaderUniforms.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000208 /* ShaderUniforms.swift */; };
 		000000000000000000000109 /* Shaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000209 /* Shaders.metal */; };
+		000000000000000000000110 /* ObjectPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000210 /* ObjectPlacement.swift */; };
+		72C11EB9305A33A500827F93 /* RenderObject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C11EB8305A33A100827F93 /* RenderObject.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		000000000000000000000015 /* MetslStarter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MetslStarter.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000200 /* MetslStarterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetslStarterApp.swift; sourceTree = "<group>"; };
 		000000000000000000000201 /* MetalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalView.swift; sourceTree = "<group>"; };
 		000000000000000000000202 /* KeyboardMetalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardMetalView.swift; sourceTree = "<group>"; };
@@ -27,14 +29,18 @@
 		000000000000000000000204 /* Camera.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Camera.swift; sourceTree = "<group>"; };
 		000000000000000000000205 /* Transforms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transforms.swift; sourceTree = "<group>"; };
 		000000000000000000000206 /* Renderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Renderer.swift; sourceTree = "<group>"; };
-		000000000000000000000207 /* SphereMesh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SphereMesh.swift; sourceTree = "<group>"; };
 		000000000000000000000208 /* ShaderUniforms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShaderUniforms.swift; sourceTree = "<group>"; };
 		000000000000000000000209 /* Shaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Shaders.metal; sourceTree = "<group>"; };
-		000000000000000000000015 /* MetslStarter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MetslStarter.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000210 /* ObjectPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectPlacement.swift; sourceTree = "<group>"; };
 		000000000000000000000220 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		000000000000000000000221 /* SmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeTests.swift; sourceTree = "<group>"; };
 		000000000000000000000222 /* check.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = check.sh; sourceTree = "<group>"; };
+		72C11EB8305A33A100827F93 /* RenderObject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderObject.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		72C11EB5305A2D2900827F93 /* Meshes */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Meshes; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		000000000000000000000032 /* Frameworks */ = {
@@ -71,6 +77,14 @@
 			path = Sources;
 			sourceTree = "<group>";
 		};
+		000000000000000000000023 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000015 /* MetslStarter.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
 		000000000000000000000300 /* App */ = {
 			isa = PBXGroup;
 			children = (
@@ -99,6 +113,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000203 /* SceneConfiguration.swift */,
+				000000000000000000000210 /* ObjectPlacement.swift */,
 				000000000000000000000204 /* Camera.swift */,
 				000000000000000000000205 /* Transforms.swift */,
 			);
@@ -108,8 +123,9 @@
 		000000000000000000000304 /* Rendering */ = {
 			isa = PBXGroup;
 			children = (
+				72C11EB5305A2D2900827F93 /* Meshes */,
 				000000000000000000000206 /* Renderer.swift */,
-				000000000000000000000207 /* SphereMesh.swift */,
+				72C11EB8305A33A100827F93 /* RenderObject.swift */,
 				000000000000000000000208 /* ShaderUniforms.swift */,
 			);
 			path = Rendering;
@@ -139,14 +155,6 @@
 			path = Scripts;
 			sourceTree = "<group>";
 		};
-		000000000000000000000023 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				000000000000000000000015 /* MetslStarter.app */,
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -161,6 +169,9 @@
 			buildRules = (
 			);
 			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				72C11EB5305A2D2900827F93 /* Meshes */,
 			);
 			name = MetslStarter;
 			productName = MetslStarter;
@@ -220,10 +231,11 @@
 				000000000000000000000101 /* MetalView.swift in Sources */,
 				000000000000000000000102 /* KeyboardMetalView.swift in Sources */,
 				000000000000000000000103 /* SceneConfiguration.swift in Sources */,
+				000000000000000000000110 /* ObjectPlacement.swift in Sources */,
 				000000000000000000000104 /* Camera.swift in Sources */,
 				000000000000000000000105 /* Transforms.swift in Sources */,
 				000000000000000000000106 /* Renderer.swift in Sources */,
-				000000000000000000000107 /* SphereMesh.swift in Sources */,
+				72C11EB9305A33A500827F93 /* RenderObject.swift in Sources */,
 				000000000000000000000108 /* ShaderUniforms.swift in Sources */,
 				000000000000000000000109 /* Shaders.metal in Sources */,
 			);

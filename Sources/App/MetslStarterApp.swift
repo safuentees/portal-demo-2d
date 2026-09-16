@@ -5,8 +5,14 @@ struct MetslStarterApp: App {
     var body: some Scene {
         WindowGroup("Metsl Starter") {
             MetalView()
-                .frame(minWidth: 400, minHeight: 400)
+                .frame(
+                    minWidth: SceneConfiguration.minimumCanvasSide + 2 * SceneConfiguration.canvasPadding,
+                    minHeight: SceneConfiguration.minimumCanvasSide + 2 * SceneConfiguration.canvasPadding
+                )
         }
-        .defaultSize(width: 700, height: 700)
+        .defaultSize(
+            width: SceneConfiguration.initialCanvasSide + 2 * SceneConfiguration.canvasPadding,
+            height: SceneConfiguration.initialCanvasSide + 2 * SceneConfiguration.canvasPadding
+        )
     }
 }

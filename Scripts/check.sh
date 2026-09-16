@@ -15,6 +15,7 @@ xcodebuild -quiet \
 xcrun swiftc -swift-version 5 \
     "$project_root"/Sources/Scene/*.swift \
     "$project_root"/Sources/Rendering/*.swift \
+    "$project_root"/Sources/Rendering/Meshes/*.swift \
     "$project_root"/Sources/Input/*.swift \
     "$project_root/Tests/SmokeTests.swift" \
     -o "$build_dir/SmokeTests"

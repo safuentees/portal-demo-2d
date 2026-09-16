@@ -43,7 +43,7 @@ struct MetalView: NSViewRepresentable {
     }
 }
 
-#Preview("Solid sphere") {
+#Preview("Square canvas") {
     MetalView()
         .frame(width: 500, height: 500)
 }
