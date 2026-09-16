@@ -325,6 +325,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         let topPortalMatrix = object(withID: .topBar).map { portal in
             Transforms.frame(position: portal.placement.position, angle: portal.placement.angle)
         } ?? matrix_identity_float4x4
+        
+        let bottomPortalMatrix = object(withID: .bottomBar).map { portal in
+            Transforms.frame(position: portal.placement.position, angle: portal.placement.angle)
+        } ?? matrix_identity_float4x4
 
         // Solid objects establish depth first. Blend translucent fields back to front.
         let opaqueObjects = objects.filter { $0.color.w >= 1 }
@@ -332,12 +336,17 @@ final class Renderer: NSObject, MTKViewDelegate {
             $0.placement.position.z > $1.placement.position.z
         }
         for object in opaqueObjects + translucentObjects {
+            let pipeline: MTLRenderPipelineState
             
-            encoder.setRenderPipelineState(
-                    object.id == .coneClone
-                        ? portalClonePipelineState
-                        : pipelineState
-                )
+            if object.id == .coneClone {
+                pipeline = portalClonePipelineState
+            } else if object.id == .cone {
+                pipeline = portalPipelineState
+            } else {
+                pipeline = pipelineState
+            }
+            
+            encoder.setRenderPipelineState(pipeline)
             
             encoder.setDepthStencilState(object.color.w >= 1 ? depthState : translucentDepthState)
             // 1. Select this object's geometry.
@@ -367,8 +376,11 @@ final class Renderer: NSObject, MTKViewDelegate {
                 viewMatrix: camera.viewMatrix,
                 canvasMatrix: canvasMatrix,
                 color: object.color,
-                worldToPortal: simd_inverse(topPortalMatrix),
+                worldToPortal: simd_inverse(bottomPortalMatrix),
                 eyeInPortal: SIMD4<Float>(object.placement.position, 1)
+                    * simd_inverse(bottomPortalMatrix),
+                worldToClonePortal: simd_inverse(topPortalMatrix),
+                eyeInClonePortal: SIMD4<Float>(object.placement.position, 1)
                     * simd_inverse(topPortalMatrix),
                 resolution: SIMD2(Float(drawableSize.width), Float(drawableSize.height))
             )

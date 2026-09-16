@@ -9,6 +9,8 @@ struct ShaderUniforms {
     var color: SIMD4<Float>
     var worldToPortal = matrix_identity_float4x4
     var eyeInPortal = SIMD4<Float>.zero
+    var worldToClonePortal = matrix_identity_float4x4
+    var eyeInClonePortal = SIMD4<Float>.zero
     /// Full drawable width and height in pixels, including Retina scaling.
     var resolution = SIMD2<Float>(repeating: 1)
 }

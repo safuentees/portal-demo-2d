@@ -18,6 +18,8 @@ struct ShaderUniforms {
     float4 color;
     float4x4 worldToPortal;
     float4 eyeInPortal;
+    float4x4 worldToClonePortal;
+    float4 eyeInClonePortal;
     float2 resolution;
 };
 
@@ -49,7 +51,31 @@ fragment float4 portal_fragment(
     VertexOut input [[stage_in]],
     constant ShaderUniforms &uniforms [[buffer(1)]]
 ) {
-    return float4(1.0);
+    float2 portalPosition = (
+            float4(input.worldPosition, 0.0, 1.0)
+            * uniforms.worldToPortal
+        ).xy;
+    
+    float portalHalfWidth = 0.2;
+
+    float2 A = uniforms.eyeInPortal.xy;
+    float2 B = portalPosition;
+
+    float dy = B.y - A.y;
+
+    // Avoid division by zero for a parallel segment.
+    if (abs(dy) < 0.000001)
+        discard_fragment();
+
+    float t = -A.y / dy;
+    float x = A.x + t * (B.x - A.x);
+
+    // Keep only pixels whose sightline crosses the portal opening.
+    bool intersects = not (t >= 1.0 or t <= 0 or abs(x) > portalHalfWidth);
+    if (intersects)
+        discard_fragment();
+
+    return uniforms.color;
 }
 
 
@@ -59,12 +85,12 @@ fragment float4 portal_clone_fragment(
 ) {
     float2 portalPosition = (
             float4(input.worldPosition, 0.0, 1.0)
-            * uniforms.worldToPortal
+            * uniforms.worldToClonePortal
         ).xy;
     
     float portalHalfWidth = 0.2;
 
-    float2 A = uniforms.eyeInPortal.xy;
+    float2 A = uniforms.eyeInClonePortal.xy;
     float2 B = portalPosition;
 
     float dy = B.y - A.y;
