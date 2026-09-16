@@ -6,6 +6,8 @@ enum SceneObjectID: Hashable {
     case topBar
     case circle
     case cone
+    case circleClone
+    case coneClone
     case custom(String)
 }
 

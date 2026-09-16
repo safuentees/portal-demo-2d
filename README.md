@@ -97,6 +97,27 @@ updateObject(.topBar) { object in
 
 Every `draw(in:)` call runs `updateInput → updateScene(deltaTime:) → encodeFrame`. Put behavior in `updateScene`; `encodeFrame` draws the resulting state. The scene first translates the cone and circle from keyboard input, then applies any new mouse aiming request from the new position. Without a new request, the current heading is preserved. The initial half-turn is already stored in the mesh vertices, so it needs no extra per-frame angle.
 
+## Clone an object
+
+The default `Renderer` initializer creates `.circleClone` and `.coneClone` once during setup. They copy `.circle` and `.cone`, then move together by `SceneConfiguration.cloneOffset`, currently `(0.65, 0, 0)`, so both copies are visible beside the originals. WASD and mouse input still affect the originals; the clones stay independent. Portal mapping and automatic following are not implemented.
+
+`cloneObject` copies the source's current placement and color while sharing its GPU mesh. It returns `false` without changing the scene if the source is missing or the new ID is already in use. To create another copy, call this once during setup or in response to an action:
+
+```swift
+cloneObject(.circle, newID: .custom("anotherCircle"))
+```
+
+Use the clone's ID to edit it later, including from `updateScene()`:
+
+```swift
+updateObject(.circleClone) { clone in
+    clone.placement.position.x = 0.5
+    clone.placement.angle = .pi / 4
+}
+```
+
+Each clone has its own placement and color; changing them does not change the original. The shared mesh means edits to its underlying vertex buffers would affect both. The explicit `Renderer(view:library:sceneObjects:)` initializer builds exactly the supplied scene, without adding the default clones.
+
 ## WASD movement
 
 `KeyboardMetalView.movementDirection` converts the held keys into a 2D vector: W `(0, 1)`, A `(-1, 0)`, S `(0, -1)`, D `(1, 0)`. Opposite keys cancel. The view supplies zero when its window is inactive or it is not the first responder, and clears held keys when focus is lost. `Renderer.updateInput(from:)` copies that direction once per frame.

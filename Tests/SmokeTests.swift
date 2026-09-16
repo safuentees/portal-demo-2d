@@ -91,6 +91,7 @@ struct SmokeTests {
         try checkObjectPlacement(device: device)
         try checkMeshes(device: device)
         try checkNamedObjects(view: view, library: library)
+        try checkCloning(view: view, library: library, device: device, queue: queue)
         let renderer = try Renderer(
             view: view, library: library, sceneObjects: sceneObjects(squares: placements)
         )
@@ -120,6 +121,9 @@ struct SmokeTests {
         let emptyRenderer = try Renderer(
             view: view, library: library, sceneObjects: []
         )
+        for _ in 0..<3 { emptyRenderer.updateScene() }
+        try expect(emptyRenderer.object(withID: .circleClone) == nil && emptyRenderer.object(withID: .coneClone) == nil,
+                   "An explicitly injected empty scene must never create default clones.")
         let empty = try render(emptyRenderer, device: device, queue: queue, width: 512, height: 512)
         try checkPixels(empty, width: 512, height: 512, placements: [])
         let tiny = try render(renderer, device: device, queue: queue, width: 128, height: 128)
@@ -751,6 +755,99 @@ struct SmokeTests {
         } catch { duplicateRejected = true }
         try expect(duplicateRejected, "Duplicate scene IDs must be rejected instead of selecting an arbitrary object.")
         print("PASS: reordered scene IDs, targeted mutations, missing IDs, duplicate rejection")
+    }
+
+    @MainActor
+    static func checkCloning(
+        view: MTKView, library: MTLLibrary, device: MTLDevice, queue: MTLCommandQueue
+    ) throws {
+        let circlePlacement = ObjectPlacement(position: [-0.45, -0.35, 0.2], scale: [0.13, 0.09, 1])
+        let conePlacement = ObjectPlacement(position: [-0.45, 0.15, 0.3], scale: [0.25, 0.35, 1], angle: 0.31)
+        let configurations = [
+            SceneObjectConfiguration(id: .circle, geometry: .circle, placement: circlePlacement,
+                                     color: SceneConfiguration.objectColor),
+            SceneObjectConfiguration(id: .cone, geometry: .triangle, placement: conePlacement,
+                                     color: SceneConfiguration.objectColor),
+        ]
+        let renderer = try Renderer(view: view, library: library, sceneObjects: configurations)
+        let pairs: [(SceneObjectID, SceneObjectID)] = [(.circle, .circleClone), (.cone, .coneClone)]
+        var copiedPlacements: [ObjectPlacement] = []
+        for (sourceID, cloneID) in pairs {
+            try expect(renderer.object(withID: cloneID) == nil, "Injected scenes must remain clone-free until requested.")
+            try expect(renderer.cloneObject(sourceID, newID: cloneID), "Cloning an existing object into a new ID must succeed.")
+            guard let source = renderer.object(withID: sourceID), let clone = renderer.object(withID: cloneID) else {
+                throw Failure(description: "The source or its clone is missing.")
+            }
+            try expect(clone.id == cloneID && clone.mesh === source.mesh
+                       && clone.placement.position == source.placement.position
+                       && clone.placement.scale == source.placement.scale
+                       && clone.placement.angle == source.placement.angle && clone.color == source.color,
+                       "A clone must share the exact GPU mesh and copy every editable scene property.")
+            var displaced = source.placement
+            displaced.position.x += 0.9
+            displaced.scale *= 0.8
+            let cloneColor = SIMD4<Float>(0.3, 0.6, 0.9, 0.5)
+            renderer.updateObject(cloneID) { object in
+                object.placement = displaced
+                object.placement.angle += 0.2
+                object.color = cloneColor
+            }
+            try expect(renderer.object(withID: sourceID)?.placement.position == source.placement.position
+                       && renderer.object(withID: sourceID)?.placement.scale == source.placement.scale
+                       && renderer.object(withID: sourceID)?.placement.angle == source.placement.angle
+                       && renderer.object(withID: sourceID)?.color == source.color,
+                       "Editing a clone's placement and color must leave its source unchanged.")
+            renderer.updateObject(sourceID) { $0.color = [0.9, 0.1, 0.2, 1] }
+            try expect(renderer.object(withID: cloneID)?.color == cloneColor,
+                       "Editing the source must not change the clone's copied color.")
+            renderer.updateObject(sourceID) { $0.color = source.color }
+            renderer.updateObject(cloneID) { object in
+                object.placement.angle = displaced.angle
+                object.color = source.color
+            }
+            try expect(!renderer.cloneObject(sourceID, newID: cloneID)
+                       && !renderer.cloneObject(sourceID, newID: sourceID),
+                       "Existing target IDs and cloning onto the source ID must be rejected.")
+            try expect(renderer.object(withID: cloneID)?.placement.position == displaced.position
+                       && renderer.object(withID: cloneID)?.placement.scale == displaced.scale,
+                       "A rejected clone request must not overwrite the existing target.")
+            copiedPlacements.append(displaced)
+        }
+        try expect(!renderer.cloneObject(.custom("missing"), newID: .custom("failed-clone"))
+                   && renderer.object(withID: .custom("failed-clone")) == nil,
+                   "A missing source must fail without creating an object.")
+        let pixels = try render(renderer, device: device, queue: queue, width: 512, height: 512)
+        try checkPixels(pixels, width: 512, height: 512, placements: [],
+                        circlePlacements: [circlePlacement, copiedPlacements[0]],
+                        trianglePlacements: [conePlacement, copiedPlacements[1]])
+
+        let startup = try Renderer(view: view, library: library)
+        var editedPositions: [SceneObjectID: SIMD3<Float>] = [:]
+        for (sourceID, cloneID) in pairs {
+            guard let source = startup.object(withID: sourceID), let clone = startup.object(withID: cloneID) else {
+                throw Failure(description: "The default renderer must create the circle and cone clones once.")
+            }
+            try expect(clone.mesh === source.mesh
+                       && clone.placement.position == source.placement.position + SceneConfiguration.cloneOffset
+                       && clone.placement.scale == source.placement.scale
+                       && clone.placement.angle == source.placement.angle && clone.color == source.color,
+                       "Default clones must copy their sources and apply only the configured startup offset.")
+            let editedPosition = clone.placement.position + SIMD3<Float>(0.1, 0.1, 0)
+            startup.updateObject(cloneID) { $0.placement.position = editedPosition }
+            editedPositions[cloneID] = editedPosition
+        }
+        let before = try render(startup, device: device, queue: queue, width: 512, height: 512)
+        for _ in 0..<3 {
+            startup.updateScene(deltaTime: 0.1)
+            startup.draw(in: view)
+        }
+        for (cloneID, editedPosition) in editedPositions {
+            try expect(startup.object(withID: cloneID)?.placement.position == editedPosition,
+                       "Repeated scene updates must not recreate or reset an edited clone.")
+        }
+        let after = try render(startup, device: device, queue: queue, width: 512, height: 512)
+        try expect(before == after, "Repeated frames must not add extra visible clone copies.")
+        print("PASS: shared-mesh clones, independent copies, rejected IDs, GPU duplicates, stable default startup")
     }
 
     static func checkMeshes(device: MTLDevice) throws {

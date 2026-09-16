@@ -35,11 +35,28 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Latest cursor position in scene coordinates, ready to compare with ObjectPlacement.position.
     private(set) var mousePosition: SIMD2<Float>?
 
+    /// Build the default scene and its independent clones once, before the first frame.
+    convenience init(view: MTKView, library: MTLLibrary? = nil) throws {
+        try self.init(view: view, library: library, sceneObjects: SceneConfiguration.objects)
+
+        let pairs: [(SceneObjectID, SceneObjectID)] = [
+            (.circle, .circleClone),
+            (.cone, .coneClone),
+        ]
+        for (sourceID, cloneID) in pairs {
+            if cloneObject(sourceID, newID: cloneID) {
+                updateObject(cloneID) { clone in
+                    clone.placement.position += SceneConfiguration.cloneOffset
+                }
+            }
+        }
+    }
+
     // A supplied library lets the smoke check exercise this renderer offscreen.
     init(
         view: MTKView,
         library suppliedLibrary: MTLLibrary? = nil,
-        sceneObjects: [SceneObjectConfiguration] = SceneConfiguration.objects
+        sceneObjects: [SceneObjectConfiguration]
     ) throws {
         var identifiers = Set<SceneObjectID>()
         for object in sceneObjects {
@@ -175,6 +192,21 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Read an object's current state by name. RenderObject is a value, so this returns a copy.
     func object(withID id: SceneObjectID) -> RenderObject? {
         objects.first { $0.id == id }
+    }
+
+    /// Copy an object's current placement and color under a new ID, reusing its GPU mesh.
+    @discardableResult
+    func cloneObject(_ sourceID: SceneObjectID, newID: SceneObjectID) -> Bool {
+        guard let original = object(withID: sourceID),
+              object(withID: newID) == nil else { return false }
+
+        objects.append(RenderObject(
+            id: newID,
+            mesh: original.mesh,
+            placement: original.placement,
+            color: original.color
+        ))
+        return true
     }
 
     /// Edit an object by name and save it back to the scene.
