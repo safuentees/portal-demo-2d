@@ -255,7 +255,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             guard let source = object(withID: sourceID) else { continue }
             // World -> portal-local -> world. Always start from the original.
             let relativePosition = SIMD4<Float>(source.placement.position, 1) * inverseFrame
-            let worldPosition = relativePosition * portalFrame
+            let worldPosition = relativePosition 
 
             let direction = SIMD4<Float>(cos(source.placement.angle), sin(source.placement.angle), 0, 0)
             let relativeDirection = direction * inverseFrame
