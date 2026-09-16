@@ -16,9 +16,6 @@ enum SceneConfiguration {
     static let circleSegments = 64
     static let circleScale: Float = 0.1
 
-    // Extra rotation relative to mouse aiming, in radians. Pi is 180 degrees.
-    static let coneRotationOffset: Float = .pi
-
     // One entry per object. Give each entry a unique ID to access it later.
     // At rest, x/y range from -1 to 1 across the centered square canvas.
     // A square at scale 1 spans half the canvas; a circle spans the whole canvas.
@@ -56,8 +53,7 @@ enum SceneConfiguration {
             geometry: .triangle,
             placement: ObjectPlacement(
                 position: SIMD3(0, 0, 0),
-                scale: SIMD3(1, 1, 1),
-                angle: coneRotationOffset
+                scale: SIMD3(1, 1, 1)
             ),
             color: objectColor
         ),

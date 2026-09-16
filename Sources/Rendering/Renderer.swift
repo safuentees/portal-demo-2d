@@ -168,9 +168,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             let direction = mousePosition - SIMD2(position.x, position.y)
             // There is no direction when the cursor is exactly on the pivot.
             guard simd_length_squared(direction) > 0 else { return }
-            // atan2 measures from +X; this triangle's tip starts along +Y.
-            let aimAngle = atan2(direction.y, direction.x) - .pi / 2
-            object.placement.angle = aimAngle + SceneConfiguration.coneRotationOffset
+            // atan2 measures from +X; the mesh's flat edge faces local +Y.
+            object.placement.angle = atan2(direction.y, direction.x) - .pi / 2
         }
     }
 

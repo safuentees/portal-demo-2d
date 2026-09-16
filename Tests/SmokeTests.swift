@@ -141,7 +141,7 @@ struct SmokeTests {
                    "Positive rotation must turn +X toward +Y counterclockwise, preserving depth and W.")
         let rightward = SIMD4<Float>(0, 1, 0, 1) * Transforms.rotation(-.pi / 2)
         try expect(simd_distance(rightward, SIMD4<Float>(1, 0, 0, 1)) < 0.0001,
-                   "A negative quarter-turn must aim the triangle's +Y tip toward +X.")
+                   "A negative quarter-turn must aim the triangle's +Y flat-edge direction toward +X.")
         let rotatedPlacement = ObjectPlacement(position: [4, -3, 2], scale: [2, 3, 4], angle: .pi / 2)
         try expect(simd_distance(SIMD4<Float>(1, 2, 3, 1) * rotatedPlacement.modelMatrix,
                                 SIMD4<Float>(-2, -1, 14, 1)) < 0.0001,
@@ -314,9 +314,8 @@ struct SmokeTests {
         try expect(view.mouseCanvasPosition == SIMD2<Float>(0.5, -0.25),
                    "Mouse mapping must account for bounds origin and use logical points, not Retina drawable pixels.")
         let renderer = try Renderer(view: view, library: library, sceneObjects: namedScene)
-        let rotationOffset = SceneConfiguration.coneRotationOffset
-        let rightwardAngle = -Float.pi / 2 + rotationOffset
-        let diagonalAngle = Float.pi / 4 + rotationOffset
+        let rightwardAngle = -Float.pi / 2
+        let diagonalAngle = Float.pi / 4
         renderer.updateScene()
         try expect(renderer.object(withID: .cone)?.placement.angle == 0.37,
                    "A scene without mouse input must retain its configured cone angle.")
@@ -331,20 +330,19 @@ struct SmokeTests {
                    "The renderer must consume the input view's canvas position at rest.")
         for _ in 0..<3 { renderer.updateScene() }
         try expect(abs((renderer.object(withID: .cone)?.placement.angle ?? 0) - rightwardAngle) < 0.0001,
-                   "The cone must retain its configured offset without accumulating rotation each frame.")
+                   "The cone must aim from its translated origin without accumulating rotation each frame.")
         guard let cone = renderer.object(withID: .cone) else {
             throw Failure(description: "The cone fixture is missing.")
         }
-        let tip = SIMD4<Float>(0, 1, 0, 1) * cone.modelMatrix
+        let tip = SIMD4<Float>(0, 0, 0, 1) * cone.modelMatrix
+        let flatEdge = SIMD4<Float>(0, 1, 0, 1) * cone.modelMatrix
         let origin = cone.placement.position
-        let tipDirection = simd_normalize(SIMD2<Float>(tip.x - origin.x, tip.y - origin.y))
+        let edgeDirection = simd_normalize(SIMD2<Float>(flatEdge.x - origin.x, flatEdge.y - origin.y))
         let mouseDirection = simd_normalize(SIMD2<Float>(0.5 - origin.x, -0.25 - origin.y))
-        let expectedDirection = SIMD2<Float>(
-            mouseDirection.x * cos(rotationOffset) - mouseDirection.y * sin(rotationOffset),
-            mouseDirection.x * sin(rotationOffset) + mouseDirection.y * cos(rotationOffset)
-        )
-        try expect(simd_distance(tipDirection, expectedDirection) < 0.0001,
-                   "The cone's tip must apply the configured offset to its mouse heading; pi reverses its direction.")
+        try expect(simd_distance(edgeDirection, mouseDirection) < 0.0001,
+                   "The triangle's flat-edge midpoint must point toward the mouse.")
+        try expect(simd_distance(tip, SIMD4<Float>(origin.x, origin.y, origin.z, 1)) < 0.0001,
+                   "The flipped triangle's tip must stay fixed at its placement origin while aiming.")
         for configuration in namedScene {
             try expect(renderer.object(withID: configuration.id)?.placement.position == configuration.placement.position
                        && renderer.object(withID: configuration.id)?.placement.scale == configuration.placement.scale
@@ -387,7 +385,7 @@ struct SmokeTests {
             renderer.updateInput(from: view, deltaTime: 0)
             renderer.updateScene()
             try expect(abs((renderer.object(withID: .cone)?.placement.angle ?? 0) - diagonalAngle) < 0.0001,
-                       "Dragging must retain the configured offset around the cone's translated origin.")
+                       "Dragging must aim the flat edge from the cone's translated origin.")
         }
         expectedTriangles[0].angle = diagonalAngle
         let diagonalPixels = try render(renderer, device: device, queue: queue, width: 900, height: 600)
@@ -410,7 +408,7 @@ struct SmokeTests {
         renderer.updateInput(from: view, deltaTime: 0)
         renderer.updateScene()
         let lastAngle = renderer.object(withID: .cone)?.placement.angle
-        let paddingAngle = atan2(Float(0.25), Float(-2.25)) - .pi / 2 + rotationOffset
+        let paddingAngle = atan2(Float(0.25), Float(-2.25)) - .pi / 2
         try expect(abs((lastAngle ?? 0) - paddingAngle) < 0.0001, "Cone aiming must not clamp input in padding.")
         view.mouseExited(with: try event(.mouseExited, at: padding))
         renderer.updateInput(from: view, deltaTime: 0)
@@ -440,11 +438,6 @@ struct SmokeTests {
 
     @MainActor
     static func checkNamedObjects(view: MTKView, library: MTLLibrary) throws {
-        guard let initialCone = SceneConfiguration.objects.first(where: { $0.id == .cone }) else {
-            throw Failure(description: "The default scene must contain its named cone.")
-        }
-        try expect(initialCone.placement.angle == SceneConfiguration.coneRotationOffset,
-                   "The default cone must start with its configured rotation offset before mouse input.")
         for configurations in [namedScene, Array(namedScene.reversed())] {
             let renderer = try Renderer(view: view, library: library, sceneObjects: configurations)
             try expect(renderer.object(withID: .circle)?.id == .circle,
@@ -508,6 +501,27 @@ struct SmokeTests {
                    && triangle.submeshes.first?.primitiveType == .triangle
                    && triangle.submeshes.first?.indexCount == 3,
                    "Cone geometry must draw one triangle from three vertices.")
+        guard let triangleBuffer = triangle.vertexBuffers.first, let triangleFaces = triangle.submeshes.first else {
+            throw Failure(description: "The triangle must provide vertex and index buffers.")
+        }
+        let triangleVertices = triangleBuffer.buffer.contents().advanced(by: triangleBuffer.offset)
+            .assumingMemoryBound(to: SIMD2<Float>.self)
+        let triangleIndices = triangleFaces.indexBuffer.buffer.contents().advanced(by: triangleFaces.indexBuffer.offset)
+            .assumingMemoryBound(to: UInt16.self)
+        try expect(triangleVertices[0] == SIMD2<Float>(0, 0)
+                   && triangleVertices[1] == SIMD2<Float>(-0.5, 1)
+                   && triangleVertices[2] == SIMD2<Float>(0.5, 1),
+                   "The baked half-turn must place the tip below the flat edge without moving the triangle's footprint.")
+        let lower = simd_min(triangleVertices[0], simd_min(triangleVertices[1], triangleVertices[2]))
+        let upper = simd_max(triangleVertices[0], simd_max(triangleVertices[1], triangleVertices[2]))
+        try expect(lower == SIMD2<Float>(-0.5, 0) && upper == SIMD2<Float>(0.5, 1)
+                   && (lower + upper) / 2 == SIMD2<Float>(0, 0.5),
+                   "The flipped mesh must preserve its original bounds and bounds center.")
+        let edgeA = triangleVertices[1] - triangleVertices[0]
+        let edgeB = triangleVertices[2] - triangleVertices[0]
+        try expect(triangleIndices[0] == 0 && triangleIndices[1] == 1 && triangleIndices[2] == 2
+                   && edgeA.x * edgeB.y - edgeA.y * edgeB.x < 0,
+                   "The baked flip must retain the original indices and clockwise winding.")
         guard circle.vertexCount == 11, circle.submeshes.count == 1,
               let vertices = circle.vertexBuffers.first, let triangles = circle.submeshes.first else {
             throw Failure(description: "A ten-segment circle must have one center, ten rim vertices, and one submesh.")
@@ -681,7 +695,7 @@ struct SmokeTests {
         // Derive triangle corners directly from 2D scale/rotation equations,
         // independently of the model matrix used by the renderer.
         let triangles = trianglePlacements.map { placement in
-            [SIMD2<Float>(0, 1), SIMD2<Float>(0.5, 0), SIMD2<Float>(-0.5, 0)].map { vertex in
+            [SIMD2<Float>(0, 0), SIMD2<Float>(-0.5, 1), SIMD2<Float>(0.5, 1)].map { vertex in
                 let x = vertex.x * placement.scale.x
                 let y = vertex.y * placement.scale.y
                 let c = cos(placement.angle), s = sin(placement.angle)
