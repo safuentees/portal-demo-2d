@@ -33,6 +33,7 @@ struct SmokeTests {
             throw Failure(description: "A Metal GPU is required for the render checks.")
         }
         let library = try device.makeLibrary(URL: URL(fileURLWithPath: CommandLine.arguments[1]))
+        try checkMouseInput(device: device, library: library)
         let view = MTKView(frame: .zero, device: device)
         view.colorPixelFormat = .bgra8Unorm
         view.depthStencilPixelFormat = .depth32Float
@@ -91,6 +92,7 @@ struct SmokeTests {
         try expect(point * placement.modelMatrix == SIMD4<Float>(6, -9, 14, 1),
                    "Placement must scale each axis before translating; scale must not move the origin.")
         try checkCanvasMath()
+        try checkCanvasPosition()
 
         var straight = Camera()
         var diagonal = Camera()
@@ -148,6 +150,150 @@ struct SmokeTests {
         let point = SIMD4<Float>(1, -2, 3, 1)
         try expect(point * object.modelMatrix == SIMD4<Float>(8, 7, 15, 1),
                    "Editing an object's position or scale must update its model matrix.")
+    }
+
+    static func checkCanvasPosition() throws {
+        let cases: [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)] = [
+            ([900, 900], [450, 450], [0, 0]),
+            ([900, 900], [100, 100], [-1, -1]),
+            ([900, 900], [800, 800], [1, 1]),
+            ([900, 900], [800, 100], [1, -1]),
+            ([900, 900], [50, 450], [-8.0 / 7.0, 0]),
+            ([1200, 900], [250, 100], [-1, -1]),
+            ([1200, 900], [950, 800], [1, 1]),
+            ([900, 1200], [100, 250], [-1, -1]),
+            ([900, 1200], [800, 950], [1, 1]),
+        ]
+        for (size, point, expected) in cases {
+            guard let actual = Transforms.canvasPosition(from: point, size: size, padding: 100) else {
+                throw Failure(description: "A valid view point must map into canvas coordinates.")
+            }
+            try expect(simd_distance(actual, expected) < 0.0001,
+                       "Mouse coordinates must account for centered padding and positive Y up, without clamping.")
+        }
+        for size: SIMD2<Float> in [[900, 900], [1200, 900], [900, 1200]] {
+            for point: SIMD2<Float> in [[-1, -1], [0.37, -0.62], [1.2, -1.3]] {
+                let clip = SIMD4<Float>(point.x, point.y, 0, 1)
+                    * Transforms.squareCanvas(size: size, padding: 100)
+                let viewPoint = (SIMD2(clip.x, clip.y) + 1) * size / 2
+                guard let restored = Transforms.canvasPosition(from: viewPoint, size: size, padding: 100) else {
+                    throw Failure(description: "Canvas projection must have a valid mouse-coordinate inverse.")
+                }
+                try expect(simd_distance(restored, point) < 0.0001,
+                           "Rendered positions and mouse positions must round-trip across viewport shapes.")
+            }
+        }
+        let logical = Transforms.canvasPosition(from: [550, 250], size: [900, 600], padding: 100)
+        let backing = Transforms.canvasPosition(from: [1100, 500], size: [1800, 1200], padding: 200)
+        try expect(logical == SIMD2<Float>(0.5, -0.25) && backing == logical,
+                   "Equivalent point and Retina pixel geometry must produce the same canvas position.")
+        for size: SIMD2<Float> in [[0, 400], [400, 0], [-1, 400], [128, 128], [200, 500]] {
+            try expect(Transforms.canvasPosition(from: .zero, size: size, padding: 100) == nil,
+                       "Invalid or collapsed canvases must not produce mouse coordinates.")
+        }
+        try expect(Transforms.canvasPosition(from: [0, 400], size: [400, 400], padding: -100)
+                   == SIMD2<Float>(-1, 1), "Negative input padding must behave like zero padding.")
+    }
+
+    @MainActor
+    static func checkMouseInput(device: MTLDevice, library: MTLLibrary) throws {
+        _ = NSApplication.shared
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 900),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let view = KeyboardMetalView(frame: NSRect(x: 40, y: 30, width: 900, height: 600), device: device)
+        view.isPaused = true
+        view.colorPixelFormat = .bgra8Unorm
+        view.depthStencilPixelFormat = .depth32Float
+        window.contentView?.addSubview(view)
+        view.setBoundsOrigin(CGPoint(x: 15, y: 25))
+        view.autoResizeDrawable = false
+        view.drawableSize = CGSize(width: 1800, height: 1200)
+
+        view.updateTrackingAreas()
+        view.updateTrackingAreas()
+        let areas = view.trackingAreas.filter { ($0.owner as? KeyboardMetalView) === view }
+        try expect(areas.count == 1, "Updating mouse tracking must replace the previous tracking area.")
+        let required: NSTrackingArea.Options = [
+            .mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow,
+            .inVisibleRect, .enabledDuringMouseDrag
+        ]
+        try expect(areas[0].options.isSuperset(of: required),
+                   "Mouse tracking must register movement, entry/exit, and dragging for the visible key-window view.")
+
+        func event(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
+            let location = view.convert(point, to: nil)
+            let result: NSEvent?
+            if type == .mouseEntered || type == .mouseExited {
+                result = NSEvent.enterExitEvent(
+                    with: type, location: location, modifierFlags: [], timestamp: 0,
+                    windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 0, trackingNumber: 0, userData: nil
+                )
+            } else {
+                result = NSEvent.mouseEvent(
+                    with: type, location: location, modifierFlags: [], timestamp: 0,
+                    windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 0, clickCount: 1, pressure: 0
+                )
+            }
+            guard let result = result else { throw Failure(description: "Could not construct a mouse event.") }
+            return result
+        }
+
+        let point = CGPoint(x: view.bounds.midX + 100, y: view.bounds.midY - 50)
+        let moved = try event(.mouseMoved, at: point)
+        view.mouseMoved(with: moved)
+        try expect(view.mousePosition == point, "Mouse events must convert window locations into native view points.")
+        try expect(view.mouseCanvasPosition == SIMD2<Float>(0.5, -0.25),
+                   "Mouse mapping must account for bounds origin and use logical points, not Retina drawable pixels.")
+        let renderer = try Renderer(view: view, library: library, squarePlacements: [], circlePlacements: [])
+        renderer.updateInput(from: view, deltaTime: 0)
+        try expect(renderer.mousePosition == view.mouseCanvasPosition,
+                   "The renderer must consume the input view's canvas position at rest.")
+
+        let center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
+        for type in [NSEvent.EventType.leftMouseDragged, .rightMouseDragged, .otherMouseDragged] {
+            view.mouseMoved(with: moved)
+            let drag = try event(type, at: center)
+            switch type {
+            case .leftMouseDragged: view.mouseDragged(with: drag)
+            case .rightMouseDragged: view.rightMouseDragged(with: drag)
+            default: view.otherMouseDragged(with: drag)
+            }
+            try expect(view.mousePosition == center && view.mouseCanvasPosition == SIMD2<Float>.zero,
+                       "Every mouse drag callback must update the stored position.")
+        }
+        view.mouseDown(with: try event(.leftMouseDown, at: point))
+        try expect(view.mousePosition == point, "A mouse click must update position before the next move.")
+        let padding = CGPoint(x: view.bounds.minX + 50, y: view.bounds.midY)
+        view.mouseMoved(with: try event(.mouseMoved, at: padding))
+        try expect(view.mouseCanvasPosition == SIMD2<Float>(-2, 0),
+                   "Mouse positions in window padding must remain available outside -1...1.")
+        view.mouseExited(with: try event(.mouseExited, at: padding))
+        renderer.updateInput(from: view, deltaTime: 0)
+        try expect(view.mousePosition == nil && view.mouseCanvasPosition == nil && renderer.mousePosition == nil,
+                   "Leaving the view must clear input and renderer mouse positions.")
+        view.mouseEntered(with: try event(.mouseEntered, at: point))
+        try expect(view.mousePosition == point, "Reentering the view must restore the current mouse location.")
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        try expect(view.mousePosition == nil, "Window resignation must clear stale mouse input.")
+        view.mouseMoved(with: moved)
+        let outside = CGPoint(x: view.bounds.maxX + 1, y: view.bounds.midY)
+        view.mouseDragged(with: try event(.leftMouseDragged, at: outside))
+        try expect(view.mousePosition == nil, "Dragging outside the view must clear mouse input.")
+        view.setFrameSize(CGSize(width: 128, height: 128))
+        view.mouseMoved(with: try event(.mouseMoved, at: CGPoint(x: view.bounds.midX, y: view.bounds.midY)))
+        try expect(view.mouseCanvasPosition == nil, "Collapsed canvases must not expose mouse canvas coordinates.")
+        view.removeFromSuperview()
+        try expect(view.mousePosition == nil && view.mouseCanvasPosition == nil,
+                   "Detaching the view must clear mouse input.")
+        view.mouseMoved(with: moved)
+        try expect(view.mousePosition == nil, "Detached views must ignore mouse callbacks.")
+        print("PASS: canvas input inverse, native move/drag/click/enter/exit, Retina points, input cleanup")
     }
 
     static func checkMeshes(device: MTLDevice) throws {

@@ -41,7 +41,7 @@ The project uses SwiftUI, AppKit, MetalKit, Model I/O, and SIMD. There are no ex
 | Optional sphere geometry and mesh detail | `Sources/Rendering/Meshes/SphereMesh.swift` |
 | Camera state and movement | `Sources/Scene/Camera.swift` |
 | Scale, translation, and square canvas fitting | `Sources/Scene/Transforms.swift` |
-| Keyboard handling | `Sources/Input/KeyboardMetalView.swift` |
+| Keyboard and mouse events/state | `Sources/Input/KeyboardMetalView.swift` |
 | View setup, draw rate, renderer lifetime | `Sources/Views/MetalView.swift` |
 | Window title and initial size | `Sources/App/MetslStarterApp.swift` |
 
@@ -68,6 +68,33 @@ Keep `position.z = 0` and `scale.z = 1` for a simple flat layout. Depth does not
 
 `SceneConfiguration.objectColor` supplies the initial RGBA color for each object. The fragment shader returns each object's color directly. For runtime movement or resizing, change a `RenderObject`'s `placement.position` or `placement.scale`; its model matrix is computed from the current values.
 
+## Mouse position
+
+`KeyboardMetalView` tracks the cursor while the window is active, including movement while dragging. It stores the latest location in `private(set) var mousePosition: CGPoint?`. AppKit supplies a window-coordinate location; `convert(event.locationInWindow, from: nil)` turns that into this view's coordinates in macOS points.
+
+Use the coordinate value that matches your work:
+
+| Value | Coordinate system |
+| --- | --- |
+| `inputView.mousePosition` | Native view coordinates, measured in points. |
+| `inputView.mouseCanvasPosition` | Centered square canvas coordinates: center `(0, 0)`, right edge x = 1, top edge y = 1. |
+| `Renderer.mousePosition` | Scene coordinates, with camera movement accounted for; compare these with `ObjectPlacement.position.x/y`. |
+
+In `Renderer`, the `mousePosition` variable is refreshed in `updateInput(from:deltaTime:)` every frame. You can read it there or elsewhere in the renderer:
+
+```swift
+if let position = mousePosition {
+    // position.x and position.y are in the same space as the objects.
+    // Use them for a future selection, collision, or movement feature.
+}
+```
+
+`private(set)` lets other code read the stored state while the owning type controls updates. The optional `?` means there may be no position: the view clears it when the cursor exits or the window loses focus or detaches. Canvas conversion also returns nil if padding leaves no usable canvas. Input tracking records state only; it does not move any objects.
+
+For a 900 × 900 view with 100-point padding, the canvas side is 700. Subtract the view center `(450, 450)` from the mouse location, then divide by 350: the center becomes `(0, 0)` and the canvas's top-right corner becomes `(1, 1)`. The input view accounts for AppKit's y-axis orientation, while `Transforms.canvasPosition` performs the inverse of the render transform. Positions in the surrounding padding can exceed -1...1, matching the canvas's unclipped behavior. Using points rather than drawable pixels keeps the result consistent on Retina displays.
+
+The tracking area follows the visible view bounds, and resizing or reactivating the window refreshes a stationary cursor's location. See [Apple's tracking-area guide](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/EventOverview/TrackingAreaObjects/TrackingAreaObjects.html).
+
 ## Rendering setup
 
 - `MetalView` owns a coordinator that retains the renderer while `MTKView` holds its weak delegate.
@@ -88,7 +115,7 @@ Keep `position.z = 0` and `scale.z = 1` for a simple flat layout. Depth does not
 ./Scripts/check.sh
 ```
 
-This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover scale/translation order, placement changes, square canvas fitting and padding, unchanged depth, camera movement, Swift/Metal uniform layout, circle geometry, mixed square/circle rendering, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
+This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover scale/translation order, placement changes, square canvas fitting and padding, mouse-coordinate conversion and event callbacks, unchanged depth, camera movement, Swift/Metal uniform layout, circle geometry, mixed square/circle rendering, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
 
 To build Release:
 

@@ -13,9 +13,24 @@ enum Transforms {
         guard size.x > 0, size.y > 0 else {
             return scaling(SIMD3(0, 0, 1))
         }
-        let side = max(min(size.x, size.y) - 2 * max(padding, 0), 0)
+        let side = canvasSide(size: size, padding: padding)
         // Only x/y change. Depth and w stay unchanged, so there is no perspective.
         return scaling(SIMD3(side / size.x, side / size.y, 1))
+    }
+
+    /// Convert bottom-left-relative view points to the same coordinates used by objects.
+    /// Padding is still usable space, so values outside -1...1 are preserved.
+    static func canvasPosition(
+        from viewPosition: SIMD2<Float>, size: SIMD2<Float>, padding: Float
+    ) -> SIMD2<Float>? {
+        guard size.x > 0, size.y > 0 else { return nil }
+        let side = canvasSide(size: size, padding: padding)
+        guard side > 0 else { return nil }
+        return (viewPosition - size / 2) * (2 / side)
+    }
+
+    private static func canvasSide(size: SIMD2<Float>, padding: Float) -> Float {
+        max(min(size.x, size.y) - 2 * max(padding, 0), 0)
     }
 
     static func translation(_ offset: SIMD3<Float>) -> simd_float4x4 {

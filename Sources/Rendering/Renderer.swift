@@ -26,6 +26,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var camera = Camera()
     private var lastFrameTime: CFTimeInterval?
 
+    /// Latest cursor position in scene coordinates, ready to compare with ObjectPlacement.position.
+    private(set) var mousePosition: SIMD2<Float>?
+
     // A supplied library lets the smoke check exercise this renderer offscreen.
     init(
         view: MTKView,
@@ -96,8 +99,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         let now = CACurrentMediaTime()
         let deltaTime = Float(now - (lastFrameTime ?? now))
         lastFrameTime = now
-        if let keyboardView = view as? KeyboardMetalView {
-            camera.update(direction: keyboardView.movementDirection, deltaTime: deltaTime)
+        if let inputView = view as? KeyboardMetalView {
+            updateInput(from: inputView, deltaTime: deltaTime)
+        } else {
+            mousePosition = nil
         }
 
         guard view.drawableSize.width > 0, view.drawableSize.height > 0,
@@ -114,6 +119,14 @@ final class Renderer: NSObject, MTKViewDelegate {
         ) else { return }
         commandBuffer.present(drawable)
         commandBuffer.commit()
+    }
+
+    /// Read native input once per frame, including camera movement under a stationary cursor.
+    func updateInput(from view: KeyboardMetalView, deltaTime: Float) {
+        camera.update(direction: view.movementDirection, deltaTime: deltaTime)
+        mousePosition = view.mouseCanvasPosition.map { position in
+            position + SIMD2(camera.position.x, camera.position.y)
+        }
     }
 
     /// Encode the scene into a view drawable or an offscreen texture.
