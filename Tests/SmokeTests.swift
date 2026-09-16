@@ -5,6 +5,13 @@ import simd
 /// Runs the actual renderer against GPU textures without opening an app window.
 @main
 struct SmokeTests {
+    /// Exercise key-window guards without showing or activating a real window.
+    @MainActor
+    final class InputTestWindow: NSWindow {
+        var reportsKeyWindow = false
+        override var isKeyWindow: Bool { reportsKeyWindow }
+    }
+
     // Keep fixtures independent of the editable scene layout. These unit squares
     // become separated rectangles after applying each position and scale.
     static let placements: [ObjectPlacement] = [
@@ -77,6 +84,7 @@ struct SmokeTests {
         }
         let library = try device.makeLibrary(URL: URL(fileURLWithPath: CommandLine.arguments[1]))
         try checkMouseInput(device: device, library: library, queue: queue)
+        try checkObjectMovement(device: device, library: library, queue: queue)
         let view = MTKView(frame: .zero, device: device)
         view.colorPixelFormat = .bgra8Unorm
         view.depthStencilPixelFormat = .depth32Float
@@ -325,7 +333,7 @@ struct SmokeTests {
         try expect(renderer.mousePosition == SIMD2<Float>(0.5, -0.25)
                    && abs((renderer.object(withID: .cone)?.placement.angle ?? 0) - rightwardAngle) < 0.0001,
                    "The draw loop must read input and update the scene before checking drawable availability.")
-        renderer.updateInput(from: view, deltaTime: 0)
+        renderer.updateInput(from: view)
         try expect(renderer.mousePosition == view.mouseCanvasPosition,
                    "The renderer must consume the input view's canvas position at rest.")
         for _ in 0..<3 { renderer.updateScene() }
@@ -382,7 +390,7 @@ struct SmokeTests {
             }
             try expect(view.mousePosition == center && view.mouseCanvasPosition == SIMD2<Float>.zero,
                        "Every mouse drag callback must update the stored position.")
-            renderer.updateInput(from: view, deltaTime: 0)
+            renderer.updateInput(from: view)
             renderer.updateScene()
             try expect(abs((renderer.object(withID: .cone)?.placement.angle ?? 0) - diagonalAngle) < 0.0001,
                        "Dragging must aim the flat edge from the cone's translated origin.")
@@ -395,7 +403,7 @@ struct SmokeTests {
         )
         let pivot = CGPoint(x: view.bounds.midX + 50, y: view.bounds.midY - 50)
         view.mouseMoved(with: try event(.mouseMoved, at: pivot))
-        renderer.updateInput(from: view, deltaTime: 0)
+        renderer.updateInput(from: view)
         renderer.updateScene()
         try expect(abs((renderer.object(withID: .cone)?.placement.angle ?? 0) - diagonalAngle) < 0.0001,
                    "A pointer exactly at the cone origin must preserve the previous angle.")
@@ -405,13 +413,13 @@ struct SmokeTests {
         view.mouseMoved(with: try event(.mouseMoved, at: padding))
         try expect(view.mouseCanvasPosition == SIMD2<Float>(-2, 0),
                    "Mouse positions in window padding must remain available outside -1...1.")
-        renderer.updateInput(from: view, deltaTime: 0)
+        renderer.updateInput(from: view)
         renderer.updateScene()
         let lastAngle = renderer.object(withID: .cone)?.placement.angle
         let paddingAngle = atan2(Float(0.25), Float(-2.25)) - .pi / 2
         try expect(abs((lastAngle ?? 0) - paddingAngle) < 0.0001, "Cone aiming must not clamp input in padding.")
         view.mouseExited(with: try event(.mouseExited, at: padding))
-        renderer.updateInput(from: view, deltaTime: 0)
+        renderer.updateInput(from: view)
         renderer.updateScene()
         try expect(view.mousePosition == nil && view.mouseCanvasPosition == nil && renderer.mousePosition == nil,
                    "Leaving the view must clear input and renderer mouse positions.")
@@ -434,6 +442,156 @@ struct SmokeTests {
         view.mouseMoved(with: moved)
         try expect(view.mousePosition == nil, "Detached views must ignore mouse callbacks.")
         print("PASS: native mouse input, cone aiming, fixed origin and scene properties, GPU rotation, input cleanup")
+    }
+
+    @MainActor
+    static func checkObjectMovement(device: MTLDevice, library: MTLLibrary, queue: MTLCommandQueue) throws {
+        _ = NSApplication.shared
+        let window = InputTestWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.reportsKeyWindow = false; window.close() }
+        let view = KeyboardMetalView(frame: NSRect(x: 0, y: 0, width: 900, height: 600), device: device)
+        view.isPaused = true
+        view.colorPixelFormat = .bgra8Unorm
+        view.depthStencilPixelFormat = .depth32Float
+        window.contentView = view
+        window.reportsKeyWindow = true
+        try expect(window.makeFirstResponder(view), "The hidden input fixture must accept keyboard focus.")
+
+        func keyEvent(
+            _ key: String, code: UInt16, type: NSEvent.EventType = .keyDown,
+            repeated: Bool = false, modifiers: NSEvent.ModifierFlags = []
+        ) throws -> NSEvent {
+            guard let event = NSEvent.keyEvent(
+                with: type, location: .zero, modifierFlags: modifiers, timestamp: 0,
+                windowNumber: window.windowNumber, context: nil,
+                characters: key, charactersIgnoringModifiers: key, isARepeat: repeated, keyCode: code
+            ) else { throw Failure(description: "Could not construct a keyboard event.") }
+            return event
+        }
+        func renderer() throws -> Renderer {
+            try Renderer(view: view, library: library, sceneObjects: namedScene)
+        }
+        func expectMovement(_ renderer: Renderer, displacement: SIMD2<Float>) throws {
+            for configuration in namedScene {
+                guard let object = renderer.object(withID: configuration.id) else {
+                    throw Failure(description: "A movement fixture disappeared.")
+                }
+                let moves = configuration.id == .cone || configuration.id == .circle
+                let offset = moves ? SIMD3<Float>(displacement.x, displacement.y, 0) : .zero
+                try expect(simd_distance(object.placement.position, configuration.placement.position + offset) < 0.0001,
+                           "Only the named cone and circle must receive the same XY displacement; depth must stay fixed.")
+                try expect(object.placement.scale == configuration.placement.scale && object.color == configuration.color,
+                           "Keyboard movement must preserve object scale and color.")
+                if configuration.id != .cone {
+                    try expect(object.placement.angle == configuration.placement.angle,
+                               "Keyboard movement must not rotate circles or bars.")
+                }
+            }
+        }
+
+        let bindings: [(String, UInt16, SIMD2<Float>)] = [
+            ("w", 13, [0, 1]), ("a", 0, [-1, 0]), ("s", 1, [0, -1]), ("d", 2, [1, 0]),
+        ]
+        for (key, code, direction) in bindings {
+            view.keyDown(with: try keyEvent(key, code: code))
+            try expect(view.movementDirection == direction, "WASD must map to the expected XY direction.")
+            view.keyDown(with: try keyEvent(key, code: code, repeated: true))
+            try expect(view.movementDirection == direction, "Key repeats must not accumulate movement strength.")
+            view.keyUp(with: try keyEvent(key.uppercased(), code: code, type: .keyUp, modifiers: [.shift]))
+            try expect(view.movementDirection == SIMD2<Float>.zero,
+                       "Key release must stop movement even when modifiers change.")
+        }
+        for (key, code, _) in bindings { view.keyDown(with: try keyEvent(key, code: code)) }
+        try expect(view.movementDirection == SIMD2<Float>.zero, "Opposite held keys must cancel on both axes.")
+        view.keyUp(with: try keyEvent("a", code: 0, type: .keyUp))
+        view.keyUp(with: try keyEvent("s", code: 1, type: .keyUp))
+        try expect(view.movementDirection == SIMD2<Float>(1, 1), "Held W and D must combine into a diagonal.")
+        _ = window.makeFirstResponder(nil)
+        try expect(view.movementDirection == SIMD2<Float>.zero, "Losing first-responder focus must stop movement.")
+        _ = window.makeFirstResponder(view)
+        try expect(view.movementDirection == SIMD2<Float>.zero, "Restoring focus must not revive held keys.")
+        view.keyDown(with: try keyEvent("w", code: 13))
+        window.reportsKeyWindow = false
+        try expect(view.movementDirection == SIMD2<Float>.zero, "A non-key window must not report movement.")
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        window.reportsKeyWindow = true
+        try expect(view.movementDirection == SIMD2<Float>.zero, "Window resignation must clear held keys.")
+
+        let speed = SceneConfiguration.objectMovementSpeed
+        view.keyDown(with: try keyEvent("d", code: 2))
+        let straight = try renderer()
+        straight.updateInput(from: view)
+        straight.updateScene(deltaTime: 0.04)
+        try expectMovement(straight, displacement: [speed * 0.04, 0])
+        try expect(straight.mousePosition == nil && straight.object(withID: .cone)?.placement.angle == 0.37,
+                   "Keyboard movement must work without mouse input and retain the last cone angle.")
+        let splitFrames = try renderer()
+        splitFrames.updateInput(from: view)
+        splitFrames.updateScene(deltaTime: 0.02)
+        splitFrames.updateScene(deltaTime: 0.02)
+        try expectMovement(splitFrames, displacement: [speed * 0.04, 0])
+        let clamped = try renderer()
+        clamped.updateInput(from: view)
+        clamped.updateScene(deltaTime: -1)
+        try expectMovement(clamped, displacement: .zero)
+        clamped.updateScene(deltaTime: 100)
+        clamped.updateScene(deltaTime: 0)
+        try expectMovement(clamped, displacement: [speed * 0.1, 0])
+        view.keyDown(with: try keyEvent("w", code: 13))
+        let diagonal = try renderer()
+        diagonal.updateInput(from: view)
+        diagonal.updateScene(deltaTime: 0.04)
+        let diagonalStep = SIMD2<Float>(repeating: speed * 0.04 / sqrt(2))
+        try expectMovement(diagonal, displacement: diagonalStep)
+        view.keyUp(with: try keyEvent("w", code: 13, type: .keyUp))
+        view.keyUp(with: try keyEvent("d", code: 2, type: .keyUp))
+        diagonal.updateInput(from: view)
+        diagonal.updateScene(deltaTime: 0.1)
+        try expectMovement(diagonal, displacement: diagonalStep)
+
+        guard let mouse = NSEvent.mouseEvent(
+            with: .mouseMoved, location: view.convert(CGPoint(x: 550, y: 250), to: nil),
+            modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            eventNumber: 0, clickCount: 1, pressure: 0
+        ) else { throw Failure(description: "Could not construct a movement/aiming mouse event.") }
+        view.mouseMoved(with: mouse)
+        view.keyDown(with: try keyEvent("w", code: 13))
+        let aimed = try renderer()
+        aimed.updateInput(from: view)
+        aimed.updateScene(deltaTime: 0.1)
+        let step = speed * 0.1
+        try expectMovement(aimed, displacement: [0, step])
+        let expectedAngle = atan2(-step, Float(0.25)) - .pi / 2
+        try expect(abs((aimed.object(withID: .cone)?.placement.angle ?? 0) - expectedAngle) < 0.0001,
+                   "The cone must aim at the pointer from its new position after movement.")
+        aimed.updateInput(from: view)
+        try expect(aimed.mousePosition == SIMD2<Float>(0.5, -0.25),
+                   "WASD must move objects without moving the camera or mouse scene coordinates.")
+        var squares: [ObjectPlacement] = [], circles: [ObjectPlacement] = [], triangles: [ObjectPlacement] = []
+        for configuration in namedScene {
+            var placement = configuration.placement
+            if configuration.id == .cone || configuration.id == .circle { placement.position.y += step }
+            if configuration.id == .cone { placement.angle = expectedAngle }
+            switch configuration.geometry {
+            case .square: squares.append(placement)
+            case .circle: circles.append(placement)
+            case .triangle: triangles.append(placement)
+            }
+        }
+        let pixels = try render(aimed, device: device, queue: queue, width: 900, height: 600)
+        try checkPixels(pixels, width: 900, height: 600, placements: squares,
+                        circlePlacements: circles, trianglePlacements: triangles)
+        let plainView = MTKView(frame: .zero, device: device)
+        plainView.drawableSize = .zero
+        aimed.draw(in: plainView)
+        aimed.updateScene(deltaTime: 0.1)
+        try expectMovement(aimed, displacement: [0, step])
+        try expect(aimed.mousePosition == nil, "Drawing a non-input view must clear stale input.")
+        print("PASS: held WASD, focus/release cleanup, shared XY movement, frame timing, fixed camera, aiming after movement")
     }
 
     @MainActor

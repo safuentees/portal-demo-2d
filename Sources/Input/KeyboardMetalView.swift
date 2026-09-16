@@ -26,17 +26,17 @@ final class KeyboardMetalView: MTKView {
 
     override var acceptsFirstResponder: Bool { true }
 
-    var movementDirection: SIMD3<Float> {
+    /// Held WASD keys in the scene's XY plane: W is up, D is right.
+    var movementDirection: SIMD2<Float> {
         guard window?.isKeyWindow == true,
               window?.firstResponder === self else { return .zero }
 
         let keys = Set(pressedKeys.values)
-        var direction = SIMD3<Float>.zero
+        var direction = SIMD2<Float>.zero
         if keys.contains("a") { direction.x -= 1 }
         if keys.contains("d") { direction.x += 1 }
-        // This scene's camera looks along +Z.
-        if keys.contains("w") { direction.z += 1 }
-        if keys.contains("s") { direction.z -= 1 }
+        if keys.contains("w") { direction.y += 1 }
+        if keys.contains("s") { direction.y -= 1 }
         return direction
     }
 
@@ -123,7 +123,7 @@ final class KeyboardMetalView: MTKView {
             super.keyDown(with: event)
             return
         }
-        // Key repeat does not move the camera; it only keeps this key held.
+        // Key repeat only keeps this key held; movement happens once per frame.
         pressedKeys[event.keyCode] = key
     }
 

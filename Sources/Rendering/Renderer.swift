@@ -25,8 +25,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
     private let depthState: MTLDepthStencilState
-    private var camera = Camera()
+    private let camera = Camera()
     private var lastFrameTime: CFTimeInterval?
+    private var movementDirection = SIMD2<Float>.zero
 
     /// Latest cursor position in scene coordinates, ready to compare with ObjectPlacement.position.
     private(set) var mousePosition: SIMD2<Float>?
@@ -114,11 +115,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         let deltaTime = Float(now - (lastFrameTime ?? now))
         lastFrameTime = now
         if let inputView = view as? KeyboardMetalView {
-            updateInput(from: inputView, deltaTime: deltaTime)
+            updateInput(from: inputView)
         } else {
+            movementDirection = .zero
             mousePosition = nil
         }
-        updateScene()
+        updateScene(deltaTime: deltaTime)
 
         guard view.drawableSize.width > 0, view.drawableSize.height > 0,
               let pass = view.currentRenderPassDescriptor,
@@ -136,9 +138,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         commandBuffer.commit()
     }
 
-    /// Read native input once per frame, including camera movement under a stationary cursor.
-    func updateInput(from view: KeyboardMetalView, deltaTime: Float) {
-        camera.update(direction: view.movementDirection, deltaTime: deltaTime)
+    /// Read native input once per frame. Scene behavior consumes this state below.
+    func updateInput(from view: KeyboardMetalView) {
+        movementDirection = view.movementDirection
         mousePosition = view.mouseCanvasPosition.map { position in
             position + SIMD2(camera.position.x, camera.position.y)
         }
@@ -161,7 +163,20 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     /// Scene behavior belongs here, after input is read and before the GPU draws it.
-    func updateScene() {
+    func updateScene(deltaTime: Float = 0) {
+        if simd_length_squared(movementDirection) > 0 {
+            // Keep speed consistent diagonally and across frame rates; cap long pauses.
+            let step = min(max(deltaTime, 0), 0.1)
+            let offset = simd_normalize(movementDirection) * SceneConfiguration.objectMovementSpeed * step
+            for id: SceneObjectID in [.cone, .circle] {
+                updateObject(id) { object in
+                    object.placement.position.x += offset.x
+                    object.placement.position.y += offset.y
+                }
+            }
+        }
+
+        // Aim after moving, so the flat end faces the mouse from its new position.
         guard let mousePosition else { return }
         updateObject(.cone) { object in
             let position = object.placement.position

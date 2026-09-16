@@ -16,6 +16,9 @@ enum SceneConfiguration {
     static let circleSegments = 64
     static let circleScale: Float = 0.1
 
+    // Canvas units per second for WASD movement of the cone and circle together.
+    static let objectMovementSpeed: Float = 1.5
+
     // One entry per object. Give each entry a unique ID to access it later.
     // At rest, x/y range from -1 to 1 across the centered square canvas.
     // A square at scale 1 spans half the canvas; a circle spans the whole canvas.
