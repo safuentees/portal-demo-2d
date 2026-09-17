@@ -287,7 +287,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     private func portalFrame(for id: SceneObjectID) -> PortalFrame? {
-        object(withID: id).map { PortalFrame(placement: $0.placement) }
+        object(withID: id).map { PortalFrame(placement: $0.placement, playerRadius: $0.placement.scale.x) }
     }
 
     private func currentPortalPair() -> PortalPair? {

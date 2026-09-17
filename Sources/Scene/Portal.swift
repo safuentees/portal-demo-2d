@@ -5,11 +5,13 @@ struct PortalFrame {
     let localToWorld: simd_float4x4
     let worldToLocal: simd_float4x4
     let halfWidth: Float
+    let playerRadius: Float
 
-    init(placement: ObjectPlacement) {
+    init(placement: ObjectPlacement, playerRadius: Float) {
         localToWorld = Transforms.frame(position: placement.position, angle: placement.angle)
         worldToLocal = simd_inverse(localToWorld)
         // The square mesh spans -0.5...0.5 along its local x axis.
+        self.playerRadius = playerRadius
         halfWidth = abs(placement.scale.x) / 2
     }
 
