@@ -811,20 +811,21 @@ struct SmokeTests {
             if let exit { objects.append(SceneObjectConfiguration(id: .topBar, geometry: .square, placement: exit)) }
             return objects
         }
-        func move(_ objects: [SceneObjectConfiguration], key: String = "w") throws -> Renderer {
+        func setKey(_ key: String, down: Bool) throws {
+            let codes: [String: UInt16] = ["w": 13, "s": 1, "d": 2, "q": 12]
+            guard let code = codes[key], let event = NSEvent.keyEvent(
+                with: down ? .keyDown : .keyUp, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: key,
+                charactersIgnoringModifiers: key, isARepeat: false, keyCode: code
+            ) else { throw Failure(description: "Could not construct the portal movement key event.") }
+            if down { view.keyDown(with: event) } else { view.keyUp(with: event) }
+        }
+        func move(_ objects: [SceneObjectConfiguration], key: String = "w", keepHeld: Bool = false) throws -> Renderer {
             let renderer = try Renderer(view: view, library: library, sceneObjects: objects)
-            func event(_ type: NSEvent.EventType) throws -> NSEvent {
-                guard let event = NSEvent.keyEvent(
-                    with: type, location: .zero, modifierFlags: [], timestamp: 0,
-                    windowNumber: window.windowNumber, context: nil, characters: key,
-                    charactersIgnoringModifiers: key, isARepeat: false, keyCode: key == "w" ? 13 : 2
-                ) else { throw Failure(description: "Could not construct the portal movement key event.") }
-                return event
-            }
-            view.keyDown(with: try event(.keyDown))
+            try setKey(key, down: true)
             renderer.updateInput(from: view)
             renderer.updateScene(deltaTime: 0.1)
-            view.keyUp(with: try event(.keyUp))
+            if !keepHeld { try setKey(key, down: false) }
             return renderer
         }
         // Independent 2D frame equations: map the proposed endpoint, then preserve render depth.
@@ -905,7 +906,98 @@ struct SmokeTests {
                        && renderer.object(withID: .cone)?.placement.position == position + delta,
                        "Parallel movement and segments outside the finite opening must not teleport.")
         }
+        let controlCases: [(Bool, Float, Float)] = [
+            (false, 1, .pi), (false, -1, .pi), (true, 1, .pi), (true, -1, .pi), (false, 1, 0.83),
+        ]
+        for (reversed, sign, exitAngle) in controlCases {
+            let entrance = ObjectPlacement(scale: [1.4, 0.03, 1])
+            let exit = ObjectPlacement(position: [0.6, 0.6, 0], scale: [1.4, 0.03, 1], angle: exitAngle)
+            let from = reversed ? exit : entrance, to = reversed ? entrance : exit
+            let angle = to.angle - from.angle
+            let forward = SIMD3<Float>(-sin(angle) * sign, cos(angle) * sign, 0)
+            let right = SIMD3<Float>(cos(angle), sin(angle), 0)
+            let position = SIMD3<Float>(from.position.x, from.position.y - sign * step / 2, 0.2)
+            let circle = ObjectPlacement(position: position, scale: [0.04, 0.06, 1], angle: 0.31)
+            var cone = circle
+            cone.position.z = 0.6
+            cone.angle = -0.4
+            let key = sign > 0 ? "w" : "s", opposite = sign > 0 ? "s" : "w"
+            let renderer = try move(scene(circle: circle, cone: cone, entrance: entrance, exit: exit),
+                                    key: key, keepHeld: true)
+            func expectPosition(_ xy: SIMD3<Float>) throws {
+                for (id, z): (SceneObjectID, Float) in [(.circle, 0.2), (.cone, 0.6)] {
+                    guard let object = renderer.object(withID: id) else {
+                        throw Failure(description: "A portal-relative control fixture disappeared.")
+                    }
+                    try expect(simd_distance(object.placement.position, SIMD3<Float>(xy.x, xy.y, z)) < 0.00001,
+                               "Portal-relative controls must move body and cone together along the mapped key axes.")
+                }
+            }
+            for frame in 1...4 {
+                if frame > 1 { renderer.updateInput(from: view); renderer.updateScene(deltaTime: 0.1) }
+                try expectPosition(to.position + forward * step * (Float(frame) - 0.5))
+            }
+            try setKey(key, down: false)
+            renderer.updateInput(from: view)
+            renderer.updateScene(deltaTime: 0.1)
+            var expectedPosition = to.position + forward * step * 3.5
+            try expectPosition(expectedPosition)
+            try setKey("d", down: true)
+            renderer.updateInput(from: view)
+            renderer.updateScene(deltaTime: 0.05)
+            expectedPosition += right * step * 0.5
+            try expectPosition(expectedPosition)
+            if !reversed && sign == 1 && exitAngle == .pi {
+                _ = window.makeFirstResponder(nil)
+                renderer.updateInput(from: view)
+                renderer.updateScene(deltaTime: 0.1)
+                try expectPosition(expectedPosition)
+                _ = window.makeFirstResponder(view)
+                renderer.updateInput(from: view)
+                renderer.updateScene(deltaTime: 0.1)
+                try expectPosition(expectedPosition)
+                try setKey("d", down: true)
+            }
+            // Q rotates the cone independently; it must not rotate the persistent movement axes.
+            try setKey("q", down: true)
+            renderer.updateInput(from: view)
+            renderer.updateScene(deltaTime: 0.02)
+            expectedPosition += right * step * 0.2
+            try expectPosition(expectedPosition)
+            let expectedAngle = cone.angle + angle + SceneConfiguration.objectRotationSpeed * 0.02
+            guard let actualAngle = renderer.object(withID: .cone)?.placement.angle else {
+                throw Failure(description: "The portal-relative cone disappeared.")
+            }
+            try expect(simd_distance(SIMD2<Float>(cos(actualAngle), sin(actualAngle)),
+                                     SIMD2<Float>(cos(expectedAngle), sin(expectedAngle))) < 0.00001,
+                       "Q/E rotation must remain independent of portal-relative movement controls.")
+            try setKey("q", down: false)
+            try setKey(key, down: true)
+            renderer.updateInput(from: view)
+            renderer.updateScene(deltaTime: 0.02)
+            let diagonalPart: Float = 0.2 / sqrt(2)
+            expectedPosition += (forward + right) * step * diagonalPart
+            try expectPosition(expectedPosition)
+            try setKey(key, down: false)
+            try setKey("d", down: false)
+            try setKey(opposite, down: true)
+            renderer.updateInput(from: view)
+            for _ in 0..<4 { renderer.updateScene(deltaTime: 0.1) }
+            expectedPosition = from.position + SIMD3<Float>(step * (0.7 + diagonalPart), sign * step * (-0.5 + diagonalPart), 0)
+            try expectPosition(expectedPosition)
+            renderer.updateScene(deltaTime: 0.1)
+            expectedPosition.y -= sign * step
+            try expectPosition(expectedPosition)
+            try setKey(opposite, down: false)
+            try setKey("d", down: true)
+            renderer.updateInput(from: view)
+            renderer.updateScene(deltaTime: 0.1)
+            expectedPosition.x += step
+            try expectPosition(expectedPosition)
+            try setKey("d", down: false)
+        }
         print("PASS: rotated and reverse portal movement, shared body/cone transfer, proposed endpoint, depth, clearance, missing portals")
+        print("PASS: sustained portal-relative controls, both directions/sides, arbitrary angles, focus, diagonal speed, return travel, independent Q/E")
     }
 
     @MainActor

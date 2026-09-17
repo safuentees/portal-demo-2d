@@ -38,6 +38,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var movementDirection = SIMD2<Float>.zero
     private var rotationDirection: Float = 0
 
+    /// WASD axes follow portal crossings and persist between key presses, independent of Q/E.
+    private var movementControlAngle: Float = 0
+
     /// Latest cursor position in scene coordinates, ready to compare with ObjectPlacement.position.
     private(set) var mousePosition: SIMD2<Float>?
 
@@ -242,7 +245,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         let step = min(max(deltaTime, 0), 0.1)
         guard step > 0 else { return }
         let offset = simd_normalize(movementDirection) * SceneConfiguration.objectMovementSpeed * step
-        let displacement = SIMD3<Float>(offset.x, offset.y, 0)
+        let worldOffset = SIMD4<Float>(offset.x, offset.y, 0, 0) * Transforms.rotation(movementControlAngle)
+        let displacement = SIMD3<Float>(worldOffset.x, worldOffset.y, 0)
 
         // The body's center decides the crossing once for both body and vision.
         guard let player = object(withID: .circle) ?? object(withID: .cone) else { return }
@@ -264,6 +268,12 @@ final class Renderer: NSObject, MTKViewDelegate {
                 }
                 object.placement = placement
             }
+        }
+
+        if let crossedPair {
+            // Rotate the controls once per crossing so held keys continue along the exit motion.
+            // This frame's displacement was already mapped with the player's placement above.
+            movementControlAngle = Transforms.mappedAngle(movementControlAngle, through: crossedPair.transferMatrix)
         }
     }
 

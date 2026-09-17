@@ -22,7 +22,7 @@ Get future updates with `git pull --ff-only`. To use this exact starting point, 
 2. Select the **MetslStarter** scheme and **My Mac**.
 3. Press **Command-R**.
 
-Click the scene to focus it. **W/A/S/D** moves the player and its view together: W up, A left, S down, D right. **Hold Q to turn left/counterclockwise or E to turn right/clockwise.** Holding both cancels rotation. Mouse movement and clicks no longer change the heading. Movement affects only x/y; depth and camera stay fixed. Releasing the keys or switching windows stops movement and rotation. Closing and reopening the window restores the configured scene.
+Click the scene to focus it. **W/A/S/D** moves the player and its view together: initially W up, A left, S down, D right. Crossing a portal rotates the movement controls with the player, so you can keep holding a key to continue through. The current portals reverse both movement axes; crossing back restores them. **Hold Q to turn left/counterclockwise or E to turn right/clockwise.** Holding both cancels rotation. Mouse movement and clicks no longer change the heading. Movement affects only x/y; depth and camera stay fixed. Releasing the keys or switching windows stops movement and rotation. Closing and reopening the window restores the configured scene.
 
 The project uses SwiftUI, AppKit, MetalKit, Model I/O, and SIMD. There are no external packages or setup commands. It keeps the original macOS 14 minimum and Swift 5 language mode, uses the installed macOS SDK, and uses local ad hoc signing without an Apple development team.
 
@@ -143,9 +143,9 @@ The current equal-width bars face 180 degrees apart, making this particular tran
 
 ## WASD movement
 
-`KeyboardMetalView.movementDirection` converts the held keys into a 2D vector: W `(0, 1)`, A `(-1, 0)`, S `(0, -1)`, D `(1, 0)`. Opposite keys cancel. The view supplies zero when its window is inactive or it is not the first responder, and clears held keys when focus is lost. `Renderer.updateInput(from:)` copies that direction once per frame.
+`KeyboardMetalView.movementDirection` converts the held keys into a 2D input vector: W `(0, 1)`, A `(-1, 0)`, S `(0, -1)`, D `(1, 0)`. Opposite keys cancel. The view supplies zero when its window is inactive or it is not the first responder, and clears held keys when focus is lost. `Renderer.updateInput(from:)` copies that input once per frame; native input does not need to know about portals.
 
-`Renderer.movePlayer(deltaTime:)` computes the frame's XY `displacement`, finds one `crossedPair` from the player's center movement, and obtains its shared `exitOffset`. Inside the update for each of `.circle` and `.cone`, the placement changes like this:
+`Renderer.movePlayer(deltaTime:)` rotates that input by `movementControlAngle` to compute the frame's world-space XY `displacement`, finds one `crossedPair` from the player's center movement, and obtains its shared `exitOffset`. Inside the update for each of `.circle` and `.cone`, the placement changes like this:
 
 ```swift
 var placement = object.placement
@@ -160,7 +160,13 @@ object.placement = placement
 
 `objectMovementSpeed` is `0.85` canvas units per second and is editable in `SceneConfiguration`. `deltaTime` is the elapsed time between frames, so speed is consistent across frame rates; the 0.1-second cap prevents a large jump after a pause. Normalizing the direction keeps diagonal movement at the same speed. A shared crossing decision keeps the circle and cone together, and their rendering depths remain unchanged. Movement continues when the mouse leaves the view.
 
-WASD keeps using world axes after traversal. With the current portal mapping, holding the same key can reverse the mapped exit motion and cause a real crossing back through the portal. Input directions are not automatically rotated, and there is no cooldown suppressing that crossing.
+`movementControlAngle` starts at zero. After a crossing, `movePlayer` updates it once, outside the object loop:
+
+```swift
+movementControlAngle = Transforms.mappedAngle(movementControlAngle, through: crossedPair.transferMatrix)
+```
+
+`Transforms.mappedAngle` maps a heading vector with `w = 0`, then recovers its angle with `atan2`. The same helper maps object headings, so controls and the player use the same portal rotation without inheriting translation. The next frame's input follows the mapped exit motion. With the current 180-degree pair, W becomes down, S up, A right, and D left. Arbitrary portal angles also work; going back through the paired exit applies the inverse rotation and restores the previous controls. The orientation persists after key release or focus loss, and resets when a new renderer is created. Q/E changes only the cone's heading, not these movement axes.
 
 ## Q/E rotation
 
@@ -219,7 +225,7 @@ The tracking area follows the visible view bounds, and resizing or reactivating 
 ./Scripts/check.sh
 ```
 
-This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover named-object lookup and updates, duplicate ID rejection, WASD and Q/E key state and focus cleanup, synchronized XY movement and timing, held-key rotation and cancellation, heading preservation during mouse input, scale/rotation/translation order, placement changes, square canvas fitting and padding, mouse-coordinate conversion and event callbacks, unchanged depth, camera math, Swift/Metal uniform layout, circle and triangle geometry, translated and rotated triangle rendering, alpha blending and depth ordering, mixed square/circle rendering, portal mapping and aperture tests, center crossings and mapped movement/headings, viewport-reaching vision, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
+This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover named-object lookup and updates, duplicate ID rejection, WASD and Q/E key state and focus cleanup, synchronized XY movement and timing, held-key rotation and cancellation, heading preservation during mouse input, scale/rotation/translation order, placement changes, square canvas fitting and padding, mouse-coordinate conversion and event callbacks, unchanged depth, camera math, Swift/Metal uniform layout, circle and triangle geometry, translated and rotated triangle rendering, alpha blending and depth ordering, mixed square/circle rendering, portal mapping and aperture tests, center crossings and mapped movement/headings, held movement through portals and restored controls on return, viewport-reaching vision, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
 
 To build Release:
 

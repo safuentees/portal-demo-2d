@@ -31,7 +31,7 @@ final class KeyboardMetalView: MTKView {
         addCursorRect(bounds, cursor: .crosshair)
     }
 
-    /// Held WASD keys in the scene's XY plane: W is up, D is right.
+    /// Held WASD intent before the renderer applies portal rotation: W is +Y, D is +X.
     var movementDirection: SIMD2<Float> {
         guard window?.isKeyWindow == true,
               window?.firstResponder === self else { return .zero }
