@@ -342,6 +342,10 @@ final class Renderer: NSObject, MTKViewDelegate {
                 pipeline = portalClonePipelineState
             } else if object.id == .cone {
                 pipeline = portalPipelineState
+            } else if object.id == .circleClone {
+                pipeline = portalClonePipelineState
+            } else if object.id == .circle {
+                pipeline = portalPipelineState
             } else {
                 pipeline = pipelineState
             }

@@ -70,9 +70,12 @@ fragment float4 portal_fragment(
     float2 portalPosition = (
         float4(input.worldPosition, 0.0, 1.0) * uniforms.worldToPortal
     ).xy;
+    float2 portalClonePosition = (
+        float4(input.worldPosition, 0.0, 1.0) * uniforms.worldToClonePortal
+    ).xy;
 
     // Remove original vision that continues through the entrance opening.
-    if (intersectsPortal(uniforms.eyeInPortal.xy, portalPosition, 0.2))
+    if (intersectsPortal(uniforms.eyeInPortal.xy, portalPosition, 0.2) or intersectsPortal(uniforms.eyeInClonePortal.xy, portalClonePosition, 0.2))
         discard_fragment();
 
     return uniforms.color;
@@ -83,12 +86,16 @@ fragment float4 portal_clone_fragment(
     VertexOut input [[stage_in]],
     constant ShaderUniforms &uniforms [[buffer(1)]]
 ) {
-    float2 portalPosition = (
+    float2 portalClonePosition = (
         float4(input.worldPosition, 0.0, 1.0) * uniforms.worldToClonePortal
     ).xy;
+    float2 portalPosition = (
+        float4(input.worldPosition, 0.0, 1.0) * uniforms.worldToPortal
+    ).xy;
+    
 
     // Show only cloned vision that continues through the exit opening.
-    if (!intersectsPortal(uniforms.eyeInClonePortal.xy, portalPosition, 0.2))
+    if (!intersectsPortal(uniforms.eyeInClonePortal.xy, portalClonePosition, 0.2) and !intersectsPortal(uniforms.eyeInPortal.xy, portalPosition, 0.2))
         discard_fragment();
 
     return uniforms.color;
