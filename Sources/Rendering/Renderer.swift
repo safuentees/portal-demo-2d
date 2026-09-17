@@ -251,8 +251,34 @@ final class Renderer: NSObject, MTKViewDelegate {
         let offset = simd_normalize(movementDirection) * SceneConfiguration.objectMovementSpeed * step
         for id: SceneObjectID in [.cone, .circle] {
             updateObject(id) { object in
-                object.placement.position.x += offset.x
-                object.placement.position.y += offset.y
+                let before = object.placement.position
+                var after = before + SIMD3(offset.x, offset.y, 0)
+                let entrance = portalFrame(for: .bottomBar)
+                let exit = portalFrame(for: .topBar)
+                
+                let A = SIMD4(before, 1.0) * entrance!.worldToLocal
+                let B = SIMD4(after, 1.0)  * entrance!.worldToLocal
+                
+                let t = -A.y / (B.y - A.y)
+                let hit = A + t * (B - A)
+                
+                let A1 = SIMD4(before, 1.0) * exit!.worldToLocal
+                let B1 = SIMD4(after, 1.0)  * exit!.worldToLocal
+                
+                let t1 = -A1.y / (B1.y - A1.y)
+                let hit1 = A1 + t1 * (B1 - A1)
+                
+                if abs(hit.x) <= entrance!.halfWidth && t >= 0 && t <= 1 {
+                    let pair = PortalPair(entrance: entrance!, exit: exit!)
+                    after = pair.mappedPlacement(object.placement).position
+                } else if abs(hit1.x) <= exit!.halfWidth && t1 >= 0 && t1 <= 1 {
+                    let pair = PortalPair(entrance: exit!, exit: entrance!)
+                    after = pair.mappedPlacement(object.placement).position
+                }
+                
+                
+                
+                object.placement.position = after
             }
         }
     }
