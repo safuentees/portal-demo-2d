@@ -249,10 +249,13 @@ final class Renderer: NSObject, MTKViewDelegate {
         let displacement = SIMD3<Float>(worldOffset.x, worldOffset.y, 0)
 
         // The body's center decides the crossing once for both body and vision.
-        guard let player = object(withID: .circle) ?? object(withID: .cone) else { return }
+        let circle = object(withID: .circle)
+        guard let player = circle ?? object(withID: .cone) else { return }
+        // The unit circle's live scale defines its physical size. Vision alone is a point.
+        let playerRadius = circle.map { CircleMesh.boundingRadius(for: $0.placement.scale) } ?? 0
         let before = player.placement.position
         let after = before + displacement
-        let crossedPair = currentPortalPair()?.firstCrossing(from: before, to: after)
+        let crossedPair = currentPortalPair()?.firstCrossing(from: before, to: after, playerRadius: playerRadius)
         let exitOffset = crossedPair?.exitClearanceOffset(from: before, to: after) ?? .zero
 
         for id: SceneObjectID in [.circle, .cone] {
@@ -287,7 +290,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     private func portalFrame(for id: SceneObjectID) -> PortalFrame? {
-        object(withID: id).map { PortalFrame(placement: $0.placement, playerRadius: $0.placement.scale.x) }
+        object(withID: id).map { PortalFrame(placement: $0.placement) }
     }
 
     private func currentPortalPair() -> PortalPair? {

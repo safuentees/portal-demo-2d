@@ -185,6 +185,7 @@ struct SmokeTests {
         try checkVisionScale()
         try checkPortalFrames()
         try checkPortalCrossings()
+        try checkPlayerRadiusFit()
 
         var straight = Camera()
         var diagonal = Camera()
@@ -301,6 +302,50 @@ struct SmokeTests {
         }
         try expect(pair.exitClearanceOffset(from: [0, -0.1, 0.4], to: [0, 0.1, 0.4]) == .zero,
                    "Movement already beyond the exit plane must keep its full mapped endpoint without a nudge.")
+    }
+
+    static func checkPlayerRadiusFit() throws {
+        try expect(CircleMesh.localRadius == 1
+                   && CircleMesh.boundingRadius(for: [-0.03, 0.05, 100]) == 0.05
+                   && CircleMesh.boundingRadius(for: [0.08, -0.04, 0]) == 0.08,
+                   "Circle bounds must use the largest absolute XY scale and ignore render depth.")
+        let placements = [
+            ObjectPlacement(scale: [0.4, 0.03, 1]),
+            ObjectPlacement(position: [0.5, 0.7, 0.8], scale: [-0.4, 0.03, 100], angle: 0.73),
+        ]
+        let pair = PortalPair(entrance: PortalFrame(placement: placements[0]), exit: PortalFrame(placement: placements[1]))
+        for placement in placements {
+            let right = SIMD3<Float>(cos(placement.angle), sin(placement.angle), 0)
+            let normal = SIMD3<Float>(-sin(placement.angle), cos(placement.angle), 0)
+            for sign: Float in [-1, 1] {
+                for (x, fits): (Float, Bool) in [(-0.14, true), (0.14, true), (-0.18, false), (0.18, false)] {
+                    let center = placement.position + right * x
+                    let crossing = pair.firstCrossing(from: center - normal * sign * 0.1,
+                                                      to: center + normal * sign * 0.1, playerRadius: 0.05)
+                    try expect((crossing != nil) == fits,
+                               "Radius fit must account for both opening edges, travel directions, and rotated/mirrored portals.")
+                }
+            }
+        }
+        for x: Float in [-0.15, 0.15] {
+            try expect(pair.firstCrossing(from: [x, -0.1, 0], to: [x, 0.1, 0], playerRadius: 0.05) != nil,
+                       "An exactly tangent radius must still fit through the opening.")
+        }
+        for radius: Float in [-0.01, 0.21] {
+            try expect(pair.firstCrossing(from: [0, -0.1, 0], to: [0, 0.1, 0], playerRadius: radius) == nil,
+                       "Negative radii and players larger than the opening must be rejected.")
+        }
+        let narrowExit = PortalFrame(placement: ObjectPlacement(position: [0, 1, 0], scale: [0.08, 1, 1]))
+        try expect(PortalPair(entrance: pair.entrance, exit: narrowExit)
+            .firstCrossing(from: [0, -0.1, 0], to: [0, 0.1, 0], playerRadius: 0.05) == nil,
+                   "The player must fit through the destination opening as well as the entrance.")
+        let closePair = PortalPair(entrance: pair.entrance, exit: PortalFrame(placement: ObjectPlacement(
+            position: [0.18, 0.1, 0], scale: [0.4, 1, 1]
+        )))
+        try expect(closePair.firstCrossing(from: [0.18, -0.1, 0], to: [0.18, 0.2, 0], playerRadius: 0.05) == nil
+                   && closePair.firstCrossing(from: [0.18, -0.1, 0], to: [0.18, 0.2, 0]) != nil
+                   && closePair.firstCrossing(from: [0.18, 0.05, 0], to: [0.18, 0.2, 0], playerRadius: 0.05) != nil,
+                   "A failed fit at the earliest center crossing must not skip ahead to a later portal that fits.")
     }
 
     static func checkCanvasMath() throws {
@@ -908,6 +953,41 @@ struct SmokeTests {
                        && renderer.object(withID: .cone)?.placement.position == position + delta,
                        "Parallel movement and segments outside the finite opening must not teleport.")
         }
+        let fitEntrance = ObjectPlacement(scale: [0.4, 0.03, 1])
+        let fitExit = ObjectPlacement(position: [0.5, 0.5, 0], scale: [0.4, 0.03, 1])
+        let fitBody = ObjectPlacement(position: [0.14, -step / 2, 0.2], scale: [0.04, 0.04, 1], angle: 0.31)
+        let fitCone = ObjectPlacement(position: [0.14, -step / 2, 0.6], scale: [2, 3, 9], angle: -0.4)
+        let resizing = try Renderer(view: view, library: library, sceneObjects: scene(
+            circle: fitBody, cone: fitCone, entrance: fitEntrance, exit: fitExit
+        ))
+        try setKey("w", down: true)
+        for (scale, fits): (SIMD3<Float>, Bool) in [
+            ([0.03, -0.08, 100], false), ([-0.05, 0.04, 100], true),
+            ([0.03, -0.08, 0], false), ([0.02, 0.03, 8], true),
+        ] {
+            resizing.updateObject(.circle) { $0.placement = fitBody; $0.placement.scale = scale }
+            resizing.updateObject(.cone) { $0.placement = fitCone }
+            resizing.updateInput(from: view)
+            resizing.updateScene(deltaTime: 0.1)
+            let transfer = fits ? SIMD3<Float>(0.5, 0.5, 0) : .zero
+            for (id, original): (SceneObjectID, ObjectPlacement) in [(.circle, fitBody), (.cone, fitCone)] {
+                guard let actual = resizing.object(withID: id) else {
+                    throw Failure(description: "A radius-fit movement fixture disappeared.")
+                }
+                try expect(simd_distance(actual.placement.position, original.position + offset + transfer) < 0.00001
+                           && abs(actual.placement.angle - original.angle) < 0.00001,
+                           "Live circle resizing must control radius fit; rejected fits must keep ordinary movement for body and cone.")
+            }
+            try expect(resizing.object(withID: .circle)?.placement.scale == scale,
+                       "Radius testing must not change the live circle scale.")
+        }
+        try setKey("w", down: false)
+        let visionOnly = try move(scene(circle: nil, cone: fitCone, entrance: fitEntrance, exit: fitExit))
+        try expect(visionOnly.object(withID: .cone).map {
+            simd_distance($0.placement.position, fitCone.position + offset + SIMD3<Float>(0.5, 0.5, 0)) < 0.00001
+        } == true,
+                   "Without a circle, the cone-only fallback must use a point radius regardless of vision size.")
+
         let controlCases: [(Bool, Float, Float)] = [
             (false, 1, .pi), (false, -1, .pi), (true, 1, .pi), (true, -1, .pi), (false, 1, 0.83),
         ]

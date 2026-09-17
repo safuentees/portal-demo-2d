@@ -1,6 +1,14 @@
 import MetalKit
 
 enum CircleMesh {
+    static let localRadius: Float = 1
+
+    /// Radius of a circle enclosing the scaled mesh. Unequal x/y scales use the larger radius.
+    /// Rotation cannot change this bound; z only controls depth in the flat scene.
+    static func boundingRadius(for scale: SIMD3<Float>) -> Float {
+        localRadius * max(abs(scale.x), abs(scale.y))
+    }
+
     enum SetupError: LocalizedError {
         case invalidSegmentCount
 
@@ -22,7 +30,7 @@ enum CircleMesh {
         positions.reserveCapacity(segments + 1)
         for index in 0..<segments {
             let angle = 2 * Float.pi * Float(index) / Float(segments)
-            positions.append(SIMD2(cos(angle), sin(angle)))
+            positions.append(SIMD2(cos(angle), sin(angle)) * localRadius)
         }
 
         // Each triangle joins the center to two adjacent rim vertices.

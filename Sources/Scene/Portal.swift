@@ -5,13 +5,11 @@ struct PortalFrame {
     let localToWorld: simd_float4x4
     let worldToLocal: simd_float4x4
     let halfWidth: Float
-    let playerRadius: Float
 
-    init(placement: ObjectPlacement, playerRadius: Float) {
+    init(placement: ObjectPlacement) {
         localToWorld = Transforms.frame(position: placement.position, angle: placement.angle)
         worldToLocal = simd_inverse(localToWorld)
         // The square mesh spans -0.5...0.5 along its local x axis.
-        self.playerRadius = playerRadius
         halfWidth = abs(placement.scale.x) / 2
     }
 
@@ -47,22 +45,35 @@ struct PortalPair {
         Transforms.mappedPlacement(placement, through: transferMatrix)
     }
 
-    /// Select the first opening crossed and orient the pair in that travel direction.
-    func firstCrossing(from before: SIMD3<Float>, to after: SIMD3<Float>) -> PortalPair? {
-        guard entrance.halfWidth > 0, exit.halfWidth > 0 else { return nil }
+    /// Select the first center crossing, then require the player to fit through both openings.
+    /// Radius zero preserves point traversal, useful for scenes with no physical player body.
+    func firstCrossing(
+        from before: SIMD3<Float>, to after: SIMD3<Float>, playerRadius: Float = 0
+    ) -> PortalPair? {
+        guard entrance.halfWidth > 0, exit.halfWidth > 0, playerRadius >= 0 else { return nil }
         let forward = entrance.crossingFraction(from: before, to: after)
         let backward = exit.crossingFraction(from: before, to: after)
+        let reversePair = PortalPair(entrance: exit, exit: entrance)
+        let crossing: (pair: PortalPair, fraction: Float)
 
         switch (forward, backward) {
         case let (forward?, backward?):
-            return forward <= backward ? self : PortalPair(entrance: exit, exit: entrance)
-        case (_?, nil):
-            return self
-        case (nil, _?):
-            return PortalPair(entrance: exit, exit: entrance)
+            crossing = forward <= backward ? (self, forward) : (reversePair, backward)
+        case let (forward?, nil):
+            crossing = (self, forward)
+        case let (nil, backward?):
+            crossing = (reversePair, backward)
         case (nil, nil):
             return nil
         }
+
+        let hit = before + (after - before) * crossing.fraction
+        let localHit = SIMD4<Float>(hit, 1) * crossing.pair.entrance.worldToLocal
+        // Our rigid mapping preserves local x and body size at the exit, so the smaller
+        // opening determines how much room remains for the player's center.
+        let availableHalfWidth = min(entrance.halfWidth, exit.halfWidth) - playerRadius
+        guard abs(localHit.x) <= availableHalfWidth else { return nil }
+        return crossing.pair
     }
 
     /// Move an exact-plane arrival just beyond the exit to avoid roundoff recrossings.
