@@ -16,11 +16,12 @@ struct ShaderUniforms {
     float4x4 viewMatrix;
     float4x4 canvasMatrix;
     float4 color;
-    float4x4 worldToPortal;
-    float4 eyeInPortal;
-    float4x4 worldToClonePortal;
-    float4 eyeInClonePortal;
+    float4x4 worldToEntrance;
+    float4 eyeInEntrance;
+    float4x4 worldToExit;
+    float4 eyeInExit;
     float2 resolution;
+    float2 portalHalfWidths;
 };
 
 vertex VertexOut object_vertex(
@@ -30,16 +31,12 @@ vertex VertexOut object_vertex(
     VertexOut out;
     // Fit the flat square canvas into the padded window using x/y scaling only.
     // No perspective: depth never changes an object's apparent size.
-    out.position = float4(input.position, 0.0, 1.0)
-        * uniforms.modelMatrix
+    float4 world = float4(input.position, 0.0, 1.0) * uniforms.modelMatrix;
+    out.position = world
         * uniforms.viewMatrix
         * uniforms.canvasMatrix;
-    
-    float4 world = float4(input.position, 0.0, 1.0)
-        * uniforms.modelMatrix;
-
     out.worldPosition = world.xy;
-    
+
     return out;
 }
 
@@ -51,6 +48,10 @@ fragment float4 object_fragment(constant ShaderUniforms &uniforms [[buffer(1)]])
 // The opening lies at y = 0, from -portalHalfWidth to +portalHalfWidth.
 // A crossing must lie strictly between the segment's endpoints.
 inline bool intersectsPortal(float2 start, float2 end, float portalHalfWidth) {
+    // A missing or zero-width bar must not create an opening at the origin.
+    if (portalHalfWidth <= 0.0)
+        return false;
+
     float dy = end.y - start.y;
     if (abs(dy) < 0.000001)
         return false;
@@ -63,39 +64,35 @@ inline bool intersectsPortal(float2 start, float2 end, float portalHalfWidth) {
     return abs(x) <= portalHalfWidth;
 }
 
+inline bool intersectsEitherPortal(
+    float2 worldPosition,
+    constant ShaderUniforms &uniforms
+) {
+    float4 world = float4(worldPosition, 0.0, 1.0);
+    float2 entrancePosition = (world * uniforms.worldToEntrance).xy;
+    float2 exitPosition = (world * uniforms.worldToExit).xy;
+
+    return intersectsPortal(uniforms.eyeInEntrance.xy, entrancePosition, uniforms.portalHalfWidths.x)
+        || intersectsPortal(uniforms.eyeInExit.xy, exitPosition, uniforms.portalHalfWidths.y);
+}
+
 fragment float4 portal_fragment(
     VertexOut input [[stage_in]],
     constant ShaderUniforms &uniforms [[buffer(1)]]
 ) {
-    float2 portalPosition = (
-        float4(input.worldPosition, 0.0, 1.0) * uniforms.worldToPortal
-    ).xy;
-    float2 portalClonePosition = (
-        float4(input.worldPosition, 0.0, 1.0) * uniforms.worldToClonePortal
-    ).xy;
-
-    // Remove original vision that continues through the entrance opening.
-    if (intersectsPortal(uniforms.eyeInPortal.xy, portalPosition, 0.2) or intersectsPortal(uniforms.eyeInClonePortal.xy, portalClonePosition, 0.2))
+    // Original player and vision keep pixels on the near side of the openings.
+    if (intersectsEitherPortal(input.worldPosition, uniforms))
         discard_fragment();
 
     return uniforms.color;
 }
 
-
 fragment float4 portal_clone_fragment(
     VertexOut input [[stage_in]],
     constant ShaderUniforms &uniforms [[buffer(1)]]
 ) {
-    float2 portalClonePosition = (
-        float4(input.worldPosition, 0.0, 1.0) * uniforms.worldToClonePortal
-    ).xy;
-    float2 portalPosition = (
-        float4(input.worldPosition, 0.0, 1.0) * uniforms.worldToPortal
-    ).xy;
-    
-
-    // Show only cloned vision that continues through the exit opening.
-    if (!intersectsPortal(uniforms.eyeInClonePortal.xy, portalClonePosition, 0.2) and !intersectsPortal(uniforms.eyeInPortal.xy, portalPosition, 0.2))
+    // Cloned player and vision use the complementary visibility mask.
+    if (!intersectsEitherPortal(input.worldPosition, uniforms))
         discard_fragment();
 
     return uniforms.color;

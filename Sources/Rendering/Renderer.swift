@@ -21,6 +21,11 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
     }
 
+    private static let portalClonePairs: [(source: SceneObjectID, clone: SceneObjectID)] = [
+        (.circle, .circleClone),
+        (.cone, .coneClone),
+    ]
+
     private var objects: [RenderObject] = []
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
@@ -41,14 +46,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     convenience init(view: MTKView, library: MTLLibrary? = nil) throws {
         try self.init(view: view, library: library, sceneObjects: SceneConfiguration.objects)
 
-        let pairs: [(SceneObjectID, SceneObjectID)] = [
-            (.circle, .circleClone),
-            (.cone, .coneClone),
-        ]
-        for (sourceID, cloneID) in pairs {
+        for (sourceID, cloneID) in Self.portalClonePairs {
             cloneObject(sourceID, newID: cloneID)
-            updateObject(cloneID) { obj in
-                obj.color = cloneID == .coneClone
+            updateObject(cloneID) { clone in
+                clone.color = cloneID == .coneClone
                     ? SceneConfiguration.portalVisionColor
                     : SceneConfiguration.cloneColor
             }
@@ -104,7 +105,7 @@ final class Renderer: NSObject, MTKViewDelegate {
               let portalCloneFragment = library.makeFunction(name: "portal_clone_fragment") else {
             throw SetupError.missingShaders
         }
-        
+
         // All flat meshes use this layout; the pipeline does not belong to one shape.
         guard let vertexDescriptor = MTKMetalVertexDescriptorFromModelIO(Mesh2D.makeVertexDescriptor()) else {
             throw SetupError.invalidVertexDescriptor
@@ -127,10 +128,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         pipeline.depthAttachmentPixelFormat = view.depthStencilPixelFormat
         pipeline.rasterSampleCount = view.sampleCount
         pipelineState = try device.makeRenderPipelineState(descriptor: pipeline)
-        
+
+        pipeline.label = "Portal clone pipeline"
         pipeline.fragmentFunction = portalCloneFragment
         portalClonePipelineState = try device.makeRenderPipelineState(descriptor: pipeline)
 
+        pipeline.label = "Portal original pipeline"
         pipeline.fragmentFunction = portalFragment
         portalPipelineState = try device.makeRenderPipelineState(descriptor: pipeline)
 
@@ -234,68 +237,82 @@ final class Renderer: NSObject, MTKViewDelegate {
         return true
     }
 
-    /// Scene behavior belongs here, after input is read and before the GPU draws it.
+    /// Scene behavior runs after input is read and before the GPU draws it.
     func updateScene(deltaTime: Float = 0) {
-        if simd_length_squared(movementDirection) > 0 {
-            // Keep speed consistent diagonally and across frame rates; cap long pauses.
-            let step = min(max(deltaTime, 0), 0.1)
-            let offset = simd_normalize(movementDirection) * SceneConfiguration.objectMovementSpeed * step
-            for id: SceneObjectID in [.cone, .circle] {
-                updateObject(id) { object in
-                    object.placement.position.x += offset.x
-                    object.placement.position.y += offset.y
-                }
+        movePlayer(deltaTime: deltaTime)
+        aimPlayer()
+        updatePortalClones()
+    }
+
+    private func movePlayer(deltaTime: Float) {
+        guard simd_length_squared(movementDirection) > 0 else { return }
+        // Keep speed consistent diagonally and across frame rates; cap long pauses.
+        let step = min(max(deltaTime, 0), 0.1)
+        let offset = simd_normalize(movementDirection) * SceneConfiguration.objectMovementSpeed * step
+        for id: SceneObjectID in [.cone, .circle] {
+            updateObject(id) { object in
+                object.placement.position.x += offset.x
+                object.placement.position.y += offset.y
             }
         }
+    }
 
+    private func aimPlayer() {
         // Consume one intentional pointer update. Walking alone keeps the current heading.
-        if let aimPosition = pendingAimPosition {
-            pendingAimPosition = nil
-            updateObject(.cone) { object in
-                let position = object.placement.position
-                let direction = aimPosition - SIMD2(position.x, position.y)
-                let deadZone = SceneConfiguration.lookDeadZoneRadius
-                guard simd_length_squared(direction) > deadZone * deadZone else { return }
-                // atan2 measures from +X; the mesh's flat edge faces local +Y.
-                object.placement.angle = atan2(direction.y, direction.x) - .pi / 2
-            }
+        guard let aimPosition = pendingAimPosition else { return }
+        pendingAimPosition = nil
+        updateObject(.cone) { object in
+            let position = object.placement.position
+            let direction = aimPosition - SIMD2(position.x, position.y)
+            let deadZone = SceneConfiguration.lookDeadZoneRadius
+            guard simd_length_squared(direction) > deadZone * deadZone else { return }
+            // atan2 measures from +X; the mesh's flat edge faces local +Y.
+            object.placement.angle = atan2(direction.y, direction.x) - .pi / 2
         }
+    }
 
-        guard let bottomPortal = object(withID: .bottomBar) else { return }
-        guard let topPortal = object(withID: .topBar) else { return }
+    private func portalFrame(for id: SceneObjectID) -> PortalFrame? {
+        object(withID: id).map { PortalFrame(placement: $0.placement) }
+    }
 
-        // The portal's coordinate frame excludes its visual width and thickness.
-        let bottomPortalFrame = Transforms.frame(
-            position: bottomPortal.placement.position, angle: bottomPortal.placement.angle
-        )
-        let topPortalFrame = Transforms.frame(
-            position: topPortal.placement.position, angle: topPortal.placement.angle
-        )
-        
-        let inverseFrame = simd_inverse(bottomPortalFrame)
-        let pairs: [(SceneObjectID, SceneObjectID)] = [
-            (.circle, .circleClone), (.cone, .coneClone),
-        ]
-        for (sourceID, cloneID) in pairs {
+    private func updatePortalClones() {
+        guard let entrance = portalFrame(for: .bottomBar),
+              let exit = portalFrame(for: .topBar) else { return }
+        let pair = PortalPair(entrance: entrance, exit: exit)
+        for (sourceID, cloneID) in Self.portalClonePairs {
             guard let source = object(withID: sourceID) else { continue }
-            // Display the portal-local position. Always start from the original.
-            let relativePosition = SIMD4<Float>(source.placement.position, 1) * inverseFrame
-            
-            let position = relativePosition * topPortalFrame
-
-            let direction = SIMD4<Float>(cos(source.placement.angle), sin(source.placement.angle), 0, 0)
-            let relativeDirection = direction * inverseFrame
-            // Return the direction to world space to preserve the original heading.
-            let worldDirection = relativeDirection * topPortalFrame
-
+            // Always map the original so repeated updates cannot accumulate drift.
             updateObject(cloneID) { clone in
-                clone.placement = ObjectPlacement(
-                    position: SIMD3<Float>(position.x, position.y, position.z),
-                    scale: source.placement.scale,
-                    angle: atan2(worldDirection.y, worldDirection.x)
-                )
+                clone.placement = pair.mappedPlacement(source.placement)
             }
         }
+    }
+
+    private func pipeline(for id: SceneObjectID) -> MTLRenderPipelineState {
+        switch id {
+        case .circle, .cone:
+            return portalPipelineState
+        case .circleClone, .coneClone:
+            return portalClonePipelineState
+        default:
+            return pipelineState
+        }
+    }
+
+    /// Viewport extension changes only the draw, not the object's stored placement.
+    private func drawPlacement(for object: RenderObject, viewportSize: SIMD2<Float>) -> ObjectPlacement {
+        var placement = object.placement
+        if object.extendsVisionToViewport {
+            placement.scale = Transforms.visionScaleToCoverViewport(
+                scale: placement.scale,
+                eyePosition: SIMD2(placement.position.x - camera.position.x,
+                                   placement.position.y - camera.position.y),
+                angle: placement.angle,
+                viewportSize: viewportSize,
+                padding: Float(SceneConfiguration.canvasPadding)
+            )
+        }
+        return placement
     }
 
     /// Encode the scene into a view drawable or an offscreen texture.
@@ -320,15 +337,15 @@ final class Renderer: NSObject, MTKViewDelegate {
             size: SIMD2(Float(size.width), Float(size.height)),
             padding: Float(SceneConfiguration.canvasPadding)
         )
-        
-        // Scenes without a portal can still draw using an identity portal frame.
-        let topPortalMatrix = object(withID: .topBar).map { portal in
-            Transforms.frame(position: portal.placement.position, angle: portal.placement.angle)
-        } ?? matrix_identity_float4x4
-        
-        let bottomPortalMatrix = object(withID: .bottomBar).map { portal in
-            Transforms.frame(position: portal.placement.position, angle: portal.placement.angle)
-        } ?? matrix_identity_float4x4
+
+        // Resolve each rigid frame once per frame, outside the object loop.
+        let entrance = portalFrame(for: .bottomBar)
+        let exit = portalFrame(for: .topBar)
+        let worldToEntrance = entrance?.worldToLocal ?? matrix_identity_float4x4
+        let worldToExit = exit?.worldToLocal ?? matrix_identity_float4x4
+        let portalHalfWidths = SIMD2<Float>(entrance?.halfWidth ?? 0, exit?.halfWidth ?? 0)
+        let viewportDimensions = SIMD2<Float>(Float(size.width), Float(size.height))
+        let resolution = SIMD2<Float>(Float(drawableSize.width), Float(drawableSize.height))
 
         // Solid objects establish depth first. Blend translucent fields back to front.
         let opaqueObjects = objects.filter { $0.color.w >= 1 }
@@ -336,22 +353,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             $0.placement.position.z > $1.placement.position.z
         }
         for object in opaqueObjects + translucentObjects {
-            let pipeline: MTLRenderPipelineState
-            
-            if object.id == .coneClone {
-                pipeline = portalClonePipelineState
-            } else if object.id == .cone {
-                pipeline = portalPipelineState
-            } else if object.id == .circleClone {
-                pipeline = portalClonePipelineState
-            } else if object.id == .circle {
-                pipeline = portalPipelineState
-            } else {
-                pipeline = pipelineState
-            }
-            
-            encoder.setRenderPipelineState(pipeline)
-            
+            encoder.setRenderPipelineState(pipeline(for: object.id))
             encoder.setDepthStencilState(object.color.w >= 1 ? depthState : translucentDepthState)
             // 1. Select this object's geometry.
             let vertexBuffer = object.mesh.vertexBuffers[0]
@@ -362,31 +364,20 @@ final class Renderer: NSObject, MTKViewDelegate {
                 index: 0
             )
 
-            // 2. Supply this object's transform and color.
-            // Extend only the draw's placement so resizing never accumulates scale.
-            var placement = object.placement
-            if object.extendsVisionToViewport {
-                placement.scale = Transforms.visionScaleToCoverViewport(
-                    scale: placement.scale,
-                    eyePosition: SIMD2(placement.position.x - camera.position.x,
-                                       placement.position.y - camera.position.y),
-                    angle: placement.angle,
-                    viewportSize: SIMD2(Float(size.width), Float(size.height)),
-                    padding: Float(SceneConfiguration.canvasPadding)
-                )
-            }
+            // 2. Supply this object's transform, color, and portal-local eye positions.
+            let placement = drawPlacement(for: object, viewportSize: viewportDimensions)
+            let eye = SIMD4<Float>(object.placement.position, 1)
             var uniforms = ShaderUniforms(
                 modelMatrix: placement.modelMatrix,
                 viewMatrix: camera.viewMatrix,
                 canvasMatrix: canvasMatrix,
                 color: object.color,
-                worldToPortal: simd_inverse(bottomPortalMatrix),
-                eyeInPortal: SIMD4<Float>(object.placement.position, 1)
-                    * simd_inverse(bottomPortalMatrix),
-                worldToClonePortal: simd_inverse(topPortalMatrix),
-                eyeInClonePortal: SIMD4<Float>(object.placement.position, 1)
-                    * simd_inverse(topPortalMatrix),
-                resolution: SIMD2(Float(drawableSize.width), Float(drawableSize.height))
+                worldToEntrance: worldToEntrance,
+                eyeInEntrance: eye * worldToEntrance,
+                worldToExit: worldToExit,
+                eyeInExit: eye * worldToExit,
+                resolution: resolution,
+                portalHalfWidths: portalHalfWidths
             )
 
             encoder.setVertexBytes(

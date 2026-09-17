@@ -24,6 +24,18 @@ enum Transforms {
         rotation(angle) * translation(position)
     }
 
+    /// Map a flat object's position and heading through a rigid transform, preserving its size.
+    static func mappedPlacement(_ placement: ObjectPlacement, through matrix: simd_float4x4) -> ObjectPlacement {
+        let position = SIMD4<Float>(placement.position, 1) * matrix
+        // w = 0 rotates the heading without translating it.
+        let direction = SIMD4<Float>(cos(placement.angle), sin(placement.angle), 0, 0) * matrix
+        return ObjectPlacement(
+            position: SIMD3(position.x, position.y, position.z),
+            scale: placement.scale,
+            angle: atan2(direction.y, direction.x)
+        )
+    }
+
     /// Fit the logical -1...1 square inside a padded view, centered on the origin.
     /// Size and padding share the same units (points for the onscreen view).
     static func squareCanvas(size: SIMD2<Float>, padding: Float) -> simd_float4x4 {

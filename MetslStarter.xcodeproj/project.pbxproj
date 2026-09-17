@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		000000000000000000000112 /* Portal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000212 /* Portal.swift */; };
 		000000000000000000000100 /* MetslStarterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000200 /* MetslStarterApp.swift */; };
 		000000000000000000000101 /* MetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000201 /* MetalView.swift */; };
 		000000000000000000000102 /* KeyboardMetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000202 /* KeyboardMetalView.swift */; };
@@ -22,6 +23,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		000000000000000000000212 /* Portal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Portal.swift; sourceTree = "<group>"; };
 		000000000000000000000015 /* MetslStarter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MetslStarter.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000200 /* MetslStarterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetslStarterApp.swift; sourceTree = "<group>"; };
 		000000000000000000000201 /* MetalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalView.swift; sourceTree = "<group>"; };
@@ -117,6 +119,7 @@
 				000000000000000000000203 /* SceneConfiguration.swift */,
 				000000000000000000000211 /* SceneObjectConfiguration.swift */,
 				000000000000000000000210 /* ObjectPlacement.swift */,
+				000000000000000000000212 /* Portal.swift */,
 				000000000000000000000204 /* Camera.swift */,
 				000000000000000000000205 /* Transforms.swift */,
 			);
@@ -236,6 +239,7 @@
 				000000000000000000000103 /* SceneConfiguration.swift in Sources */,
 				000000000000000000000111 /* SceneObjectConfiguration.swift in Sources */,
 				000000000000000000000110 /* ObjectPlacement.swift in Sources */,
+				000000000000000000000112 /* Portal.swift in Sources */,
 				000000000000000000000104 /* Camera.swift in Sources */,
 				000000000000000000000105 /* Transforms.swift in Sources */,
 				000000000000000000000106 /* Renderer.swift in Sources */,

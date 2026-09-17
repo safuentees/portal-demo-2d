@@ -44,7 +44,8 @@ struct SmokeTests {
         ),
         SceneObjectConfiguration(
             id: .topBar, geometry: .square,
-            placement: ObjectPlacement(position: [-0.65, 0.7, 0], scale: [0.25, 0.1, 1])
+            // Keep input/movement fixtures clear of this aperture; masking has dedicated GPU checks.
+            placement: ObjectPlacement(position: [-0.65, 0.9, 0], scale: [0.25, 0.1, 1])
         ),
         SceneObjectConfiguration(
             id: .circle, geometry: .circle,
@@ -94,6 +95,7 @@ struct SmokeTests {
         try checkCloning(view: view, library: library, device: device, queue: queue)
         try checkResolutionUniform(view: view, device: device, queue: queue)
         try checkPortalIntersection(device: device, queue: queue)
+        try checkPortalMasks(view: view, library: library, device: device, queue: queue)
         try checkViewportVision(view: view, library: library, device: device, queue: queue)
         let renderer = try Renderer(
             view: view, library: library, sceneObjects: sceneObjects(squares: placements)
@@ -180,6 +182,7 @@ struct SmokeTests {
         try checkCanvasMath()
         try checkCanvasPosition()
         try checkVisionScale()
+        try checkPortalFrames()
 
         var straight = Camera()
         var diagonal = Camera()
@@ -194,20 +197,51 @@ struct SmokeTests {
         paused.update(direction: [0, 0, 1], deltaTime: 100)
         try expect(abs(paused.position.z - SceneConfiguration.cameraSpeed * 0.1) < 0.0001,
                    "A debugger pause must not cause a camera jump.")
-        try expect(MemoryLayout<ShaderUniforms>.size == 376
+        try expect(MemoryLayout<ShaderUniforms>.size == 384
                    && MemoryLayout<ShaderUniforms>.stride == 384
                    && MemoryLayout<ShaderUniforms>.alignment == 16,
-                   "Swift/Metal uniforms must include both portal frames and resolution with 16-byte alignment.")
+                   "Swift/Metal uniforms must include both portal frames, resolution, and opening widths with 16-byte alignment.")
         try expect(MemoryLayout<ShaderUniforms>.offset(of: \.canvasMatrix) == 128,
                    "Swift/Metal uniform canvas matrix offset changed.")
         try expect(MemoryLayout<ShaderUniforms>.offset(of: \.color) == 192,
                    "Swift/Metal uniform color offset changed.")
-        try expect(MemoryLayout<ShaderUniforms>.offset(of: \.worldToPortal) == 208
-                   && MemoryLayout<ShaderUniforms>.offset(of: \.eyeInPortal) == 272
-                   && MemoryLayout<ShaderUniforms>.offset(of: \.worldToClonePortal) == 288
-                   && MemoryLayout<ShaderUniforms>.offset(of: \.eyeInClonePortal) == 352
-                   && MemoryLayout<ShaderUniforms>.offset(of: \.resolution) == 368,
-                   "Swift/Metal portal and drawable-resolution field offsets must match.")
+        try expect(MemoryLayout<ShaderUniforms>.offset(of: \.worldToEntrance) == 208
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.eyeInEntrance) == 272
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.worldToExit) == 288
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.eyeInExit) == 352
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.resolution) == 368
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.portalHalfWidths) == 376,
+                   "Swift/Metal portal frames, drawable resolution, and half-width offsets must match.")
+    }
+
+    static func checkPortalFrames() throws {
+        let entrance = PortalFrame(placement: ObjectPlacement(
+            position: [2, -3, 0.2], scale: [-0.8, 6, 4], angle: .pi / 2
+        ))
+        let exit = PortalFrame(placement: ObjectPlacement(
+            position: [-4, 5, 0.4], scale: [1.2, 0.03, 1], angle: -.pi / 2
+        ))
+        let local = SIMD4<Float>(1, 2, 0.1, 1)
+        let world = SIMD4<Float>(0, -2, 0.3, 1)
+        try expect(simd_distance(local * entrance.localToWorld, world) < 0.0001
+                   && simd_distance(world * entrance.worldToLocal, local) < 0.0001,
+                   "Portal frames must rotate/translate without incorporating bar scale or thickness.")
+        try expect(entrance.halfWidth == 0.4 && exit.halfWidth == 0.6,
+                   "Portal opening widths must match the square mesh's absolute horizontal half-extent.")
+        let closed = PortalFrame(placement: ObjectPlacement(scale: [0, 1, 1]))
+        try expect(closed.halfWidth == 0, "Zero-width bars must represent closed openings.")
+        let pair = PortalPair(entrance: entrance, exit: exit)
+        let original = ObjectPlacement(position: [0, -2, 0.3], scale: [0.2, 0.5, 1.3], angle: 0.37)
+        let mapped = pair.mappedPlacement(original)
+        try expect(simd_distance(world * pair.transferMatrix, SIMD4<Float>(-2, 4, 0.5, 1)) < 0.0001
+                   && simd_distance(mapped.position, SIMD3<Float>(-2, 4, 0.5)) < 0.0001,
+                   "Portal pairs must map world to entrance-local to exit-world in row-vector order.")
+        try expect(mapped.scale == original.scale && abs(mapped.angle - (original.angle - .pi)) < 0.0001,
+                   "Portal mapping must preserve scale and the current frame-alignment convention without an extra half-turn.")
+        let restored = PortalPair(entrance: exit, exit: entrance).mappedPlacement(mapped)
+        try expect(simd_distance(restored.position, original.position) < 0.0001
+                   && abs(restored.angle - original.angle) < 0.0001 && restored.scale == original.scale,
+                   "Reversing a portal pair must restore the original placement.")
     }
 
     static func checkCanvasMath() throws {
@@ -1004,7 +1038,8 @@ struct SmokeTests {
                 constant float4 *segments [[buffer(0)]], device uint *results [[buffer(1)]],
                 uint index [[thread_position_in_grid]]
             ) {
-                results[index] = intersectsPortal(segments[index].xy, segments[index].zw, 0.2) ? 1 : 0;
+                results[index * 2] = intersectsPortal(segments[index].xy, segments[index].zw, 0.2) ? 1 : 0;
+                results[index * 2 + 1] = intersectsPortal(segments[index].xy, segments[index].zw, 0.0) ? 1 : 0;
             }
             """
         let library = try device.makeLibrary(source: source, options: nil)
@@ -1027,7 +1062,7 @@ struct SmokeTests {
         ]
         let segments = cases.map { $0.0 }
         let pipeline = try device.makeComputePipelineState(function: function)
-        guard let results = device.makeBuffer(length: cases.count * MemoryLayout<UInt32>.stride,
+        guard let results = device.makeBuffer(length: cases.count * 2 * MemoryLayout<UInt32>.stride,
                                               options: .storageModeShared),
               let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder() else {
             throw Failure(description: "Could not allocate the portal intersection probe.")
@@ -1044,9 +1079,73 @@ struct SmokeTests {
         try expect(command.status == .completed, "The portal intersection probe did not complete.")
         let actual = results.contents().assumingMemoryBound(to: UInt32.self)
         for (index, fixture) in cases.enumerated() {
-            try expect(actual[index] == fixture.1, "Portal intersection case \(index) returned the wrong Boolean.")
+            try expect(actual[index * 2] == fixture.1, "Portal intersection case \(index) returned the wrong Boolean.")
+            try expect(actual[index * 2 + 1] == 0, "A closed or absent aperture must never intersect a sightline.")
         }
         print("PASS: shared GPU portal predicate — hits, misses, aperture edges, parallel rays, strict endpoints")
+    }
+
+    @MainActor
+    static func checkPortalMasks(
+        view: MTKView, library: MTLLibrary, device: MTLDevice, queue: MTLCommandQueue
+    ) throws {
+        let shapes: [(SceneObjectID, SceneObjectID, SceneObjectConfiguration.Geometry, SIMD3<Float>)] = [
+            (.circle, .circleClone, .circle, [0.8, 0.8, 1]),
+            (.cone, .coneClone, .triangle, [1.6, 1.2, 1]),
+        ]
+        // Full bar widths: missing, each portal alone, both, independently narrowed, closed, mirrored.
+        let widths: [(Float?, Float?)] = [
+            (nil, nil), (0.24, nil), (nil, 0.24), (0.24, 0.24), (0.04, 0.24), (0, 0), (-0.24, 0.04),
+        ]
+        let color = SIMD4<Float>(0.3, 0.7, 0.9, 1)
+        let foreground = [color.z, color.y, color.x, color.w].map { Int(($0 * 255).rounded()) }
+        let background = SceneConfiguration.backgroundColor
+        let clear = [background.blue, background.green, background.red, background.alpha]
+            .map { Int(($0 * 255).rounded()) }
+        let eye = SIMD2<Float>(0, -0.35)
+        let size = 512
+        let halfCanvas = Float(CGFloat(size) - 2 * SceneConfiguration.canvasPadding) / 2
+        for (originalID, cloneID, geometry, scale) in shapes {
+            for (caseIndex, widthPair) in widths.enumerated() {
+                let portals: [(SceneObjectID, Float, Float?)] = [
+                    (.bottomBar, -0.18, widthPair.0), (.topBar, 0.18, widthPair.1),
+                ]
+                let frames = portals.compactMap { id, x, width -> SceneObjectConfiguration? in
+                    guard let width else { return nil }
+                    return SceneObjectConfiguration(
+                        id: id, geometry: .square,
+                        placement: ObjectPlacement(position: [x, 0, 0], scale: [width, 0.04, 1]), color: .zero
+                    )
+                }
+                for isClone in [false, true] {
+                    let object = SceneObjectConfiguration(
+                        id: isClone ? cloneID : originalID, geometry: geometry,
+                        placement: ObjectPlacement(position: [eye.x, eye.y, 0.5], scale: scale), color: color
+                    )
+                    let renderer = try Renderer(view: view, library: library, sceneObjects: frames + [object])
+                    let pixels = try render(renderer, device: device, queue: queue, width: size, height: size)
+                    // All four samples are well inside both shapes; the last lies before either portal plane.
+                    for sample: SIMD2<Float> in [[-0.25, 0.25], [0.25, 0.25], [0, 0.25], [0, -0.2]] {
+                        let x = Int(Float(size) / 2 + sample.x * halfCanvas)
+                        let y = Int(Float(size) / 2 - sample.y * halfCanvas)
+                        let world = SIMD2<Float>((Float(x) + 0.5 - Float(size) / 2) / halfCanvas,
+                                                 (Float(size) / 2 - Float(y) - 0.5) / halfCanvas)
+                        let t = -eye.y / (world.y - eye.y)
+                        let crossingX = eye.x + t * (world.x - eye.x)
+                        let hitsEither = portals.contains { _, center, width in
+                            guard let width, abs(width) > 0 else { return false }
+                            return t > 0 && t < 1 && abs(crossingX - center) <= abs(width) / 2
+                        }
+                        let visible = isClone ? hitsEither : !hitsEither
+                        let expected = visible ? foreground : clear
+                        let pixel = (y * size + x) * 4
+                        try expect((0..<4).allSatisfy { abs(Int(pixels[pixel + $0]) - expected[$0]) <= 1 },
+                                   "Portal mask mismatch for \(object.id), widths case \(caseIndex), sample \(sample).")
+                    }
+                }
+            }
+        }
+        print("PASS: original/clone circle and cone masks, either portal, missing portals, independent widths, closed openings")
     }
 
     @MainActor

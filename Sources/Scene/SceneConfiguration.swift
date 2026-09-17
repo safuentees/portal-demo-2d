@@ -24,9 +24,6 @@ enum SceneConfiguration {
     // Unit forward reach. Rendering extends both axes together to cover the window.
     static let visionScale = SIMD3<Float>(2 * tan(visionFieldOfView / 2), 1, 1)
 
-    // Show the cloned pair beside the originals until portal mapping is added.
-    static let cloneOffset = SIMD3<Float>(0.65, 0, 0)
-
     // Ignore aiming too close to the player, where tiny pointer changes cause large turns.
     static let lookDeadZoneRadius: Float = 0.07
 
