@@ -93,6 +93,7 @@ struct SmokeTests {
         try checkNamedObjects(view: view, library: library)
         try checkCloning(view: view, library: library, device: device, queue: queue)
         try checkResolutionUniform(view: view, device: device, queue: queue)
+        try checkPortalIntersection(device: device, queue: queue)
         try checkViewportVision(view: view, library: library, device: device, queue: queue)
         let renderer = try Renderer(
             view: view, library: library, sceneObjects: sceneObjects(squares: placements)
@@ -193,17 +194,19 @@ struct SmokeTests {
         paused.update(direction: [0, 0, 1], deltaTime: 100)
         try expect(abs(paused.position.z - SceneConfiguration.cameraSpeed * 0.1) < 0.0001,
                    "A debugger pause must not cause a camera jump.")
-        try expect(MemoryLayout<ShaderUniforms>.size == 296
-                   && MemoryLayout<ShaderUniforms>.stride == 304
+        try expect(MemoryLayout<ShaderUniforms>.size == 376
+                   && MemoryLayout<ShaderUniforms>.stride == 384
                    && MemoryLayout<ShaderUniforms>.alignment == 16,
-                   "Swift/Metal uniforms must include the appended resolution with 16-byte struct alignment.")
+                   "Swift/Metal uniforms must include both portal frames and resolution with 16-byte alignment.")
         try expect(MemoryLayout<ShaderUniforms>.offset(of: \.canvasMatrix) == 128,
                    "Swift/Metal uniform canvas matrix offset changed.")
         try expect(MemoryLayout<ShaderUniforms>.offset(of: \.color) == 192,
                    "Swift/Metal uniform color offset changed.")
         try expect(MemoryLayout<ShaderUniforms>.offset(of: \.worldToPortal) == 208
                    && MemoryLayout<ShaderUniforms>.offset(of: \.eyeInPortal) == 272
-                   && MemoryLayout<ShaderUniforms>.offset(of: \.resolution) == 288,
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.worldToClonePortal) == 288
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.eyeInClonePortal) == 352
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.resolution) == 368,
                    "Swift/Metal portal and drawable-resolution field offsets must match.")
     }
 
@@ -992,6 +995,60 @@ struct SmokeTests {
         print("PASS: drawable resolution in object/portal fragment uniforms, resize, non-square views, Retina")
     }
 
+    static func checkPortalIntersection(device: MTLDevice, queue: MTLCommandQueue) throws {
+        let shaderURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/Shaders/Shaders.metal")
+        let source = try String(contentsOf: shaderURL, encoding: .utf8) + """
+
+            kernel void check_portal_intersections(
+                constant float4 *segments [[buffer(0)]], device uint *results [[buffer(1)]],
+                uint index [[thread_position_in_grid]]
+            ) {
+                results[index] = intersectsPortal(segments[index].xy, segments[index].zw, 0.2) ? 1 : 0;
+            }
+            """
+        let library = try device.makeLibrary(source: source, options: nil)
+        guard let function = library.makeFunction(name: "check_portal_intersections") else {
+            throw Failure(description: "Could not create the portal intersection probe.")
+        }
+        let cases: [(SIMD4<Float>, UInt32)] = [
+            ([0, -1, 0, 1], 1),       // Through the center.
+            ([0, 1, 0, -1], 1),       // Either direction crosses the same opening.
+            ([0.2, -1, 0.2, 1], 1),   // The aperture includes both horizontal endpoints.
+            ([-0.2, -1, -0.2, 1], 1),
+            ([0.21, -1, 0.21, 1], 0), // Crossing outside the opening.
+            ([0, 1, 0, 2], 0),        // The infinite line crosses, but the segment does not.
+            ([0, -2, 0, -1], 0),
+            ([-1, 1, 1, 1], 0),       // Parallel to the portal plane.
+            ([-1, 0, 1, 0], 0),       // Collinear is also parallel.
+            ([0, -0.0000001, 0, 0.0000001], 0), // Near-parallel guard.
+            ([0, 0, 0, 1], 0),        // Strict segment endpoints: t = 0 and t = 1.
+            ([0, -1, 0, 0], 0),
+        ]
+        let segments = cases.map { $0.0 }
+        let pipeline = try device.makeComputePipelineState(function: function)
+        guard let results = device.makeBuffer(length: cases.count * MemoryLayout<UInt32>.stride,
+                                              options: .storageModeShared),
+              let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder() else {
+            throw Failure(description: "Could not allocate the portal intersection probe.")
+        }
+        encoder.setComputePipelineState(pipeline)
+        segments.withUnsafeBytes { encoder.setBytes($0.baseAddress!, length: $0.count, index: 0) }
+        encoder.setBuffer(results, offset: 0, index: 1)
+        encoder.dispatchThreads(MTLSize(width: cases.count, height: 1, depth: 1),
+                                threadsPerThreadgroup: MTLSize(width: cases.count, height: 1, depth: 1))
+        encoder.endEncoding()
+        command.commit()
+        command.waitUntilCompleted()
+        if let error = command.error { throw error }
+        try expect(command.status == .completed, "The portal intersection probe did not complete.")
+        let actual = results.contents().assumingMemoryBound(to: UInt32.self)
+        for (index, fixture) in cases.enumerated() {
+            try expect(actual[index] == fixture.1, "Portal intersection case \(index) returned the wrong Boolean.")
+        }
+        print("PASS: shared GPU portal predicate — hits, misses, aperture edges, parallel rays, strict endpoints")
+    }
+
     @MainActor
     static func checkViewportVision(
         view: MTKView, library: MTLLibrary, device: MTLDevice, queue: MTLCommandQueue
@@ -1018,7 +1075,7 @@ struct SmokeTests {
             let right = SIMD2<Float>(cos(angle), sin(angle))
             let portalOrigin = SIMD2<Float>(-0.15, 0.1)
             let eye = clipped ? portalOrigin + right * fixtureEye.x + forward * fixtureEye.y : fixtureEye
-            let id: SceneObjectID = clipped ? .coneClone : .cone
+            let id: SceneObjectID = clipped ? .coneClone : .custom("unmasked-vision")
             let placement = ObjectPlacement(position: [eye.x, eye.y, 0.5], scale: [1.24, 1, 1], angle: angle)
             var objects = [SceneObjectConfiguration(
                 id: id, geometry: .triangle, placement: placement, color: color,

@@ -47,32 +47,32 @@ fragment float4 object_fragment(constant ShaderUniforms &uniforms [[buffer(1)]])
     return uniforms.color;
 }
 
+// Both points must be in the same portal-local coordinate system.
+// The opening lies at y = 0, from -portalHalfWidth to +portalHalfWidth.
+// A crossing must lie strictly between the segment's endpoints.
+inline bool intersectsPortal(float2 start, float2 end, float portalHalfWidth) {
+    float dy = end.y - start.y;
+    if (abs(dy) < 0.000001)
+        return false;
+
+    float t = -start.y / dy;
+    if (t <= 0.0 || t >= 1.0)
+        return false;
+
+    float x = start.x + t * (end.x - start.x);
+    return abs(x) <= portalHalfWidth;
+}
+
 fragment float4 portal_fragment(
     VertexOut input [[stage_in]],
     constant ShaderUniforms &uniforms [[buffer(1)]]
 ) {
     float2 portalPosition = (
-            float4(input.worldPosition, 0.0, 1.0)
-            * uniforms.worldToPortal
-        ).xy;
-    
-    float portalHalfWidth = 0.2;
+        float4(input.worldPosition, 0.0, 1.0) * uniforms.worldToPortal
+    ).xy;
 
-    float2 A = uniforms.eyeInPortal.xy;
-    float2 B = portalPosition;
-
-    float dy = B.y - A.y;
-
-    // Avoid division by zero for a parallel segment.
-    if (abs(dy) < 0.000001)
-        discard_fragment();
-
-    float t = -A.y / dy;
-    float x = A.x + t * (B.x - A.x);
-
-    // Keep only pixels whose sightline crosses the portal opening.
-    bool intersects = not (t >= 1.0 or t <= 0 or abs(x) > portalHalfWidth);
-    if (intersects)
+    // Remove original vision that continues through the entrance opening.
+    if (intersectsPortal(uniforms.eyeInPortal.xy, portalPosition, 0.2))
         discard_fragment();
 
     return uniforms.color;
@@ -84,26 +84,11 @@ fragment float4 portal_clone_fragment(
     constant ShaderUniforms &uniforms [[buffer(1)]]
 ) {
     float2 portalPosition = (
-            float4(input.worldPosition, 0.0, 1.0)
-            * uniforms.worldToClonePortal
-        ).xy;
-    
-    float portalHalfWidth = 0.2;
+        float4(input.worldPosition, 0.0, 1.0) * uniforms.worldToClonePortal
+    ).xy;
 
-    float2 A = uniforms.eyeInClonePortal.xy;
-    float2 B = portalPosition;
-
-    float dy = B.y - A.y;
-
-    // Avoid division by zero for a parallel segment.
-    if (abs(dy) < 0.000001)
-        discard_fragment();
-
-    float t = -A.y / dy;
-    float x = A.x + t * (B.x - A.x);
-
-    // Keep only pixels whose sightline crosses the portal opening.
-    if (t >= 1.0 or t <= 0 or abs(x) > portalHalfWidth)
+    // Show only cloned vision that continues through the exit opening.
+    if (!intersectsPortal(uniforms.eyeInClonePortal.xy, portalPosition, 0.2))
         discard_fragment();
 
     return uniforms.color;
