@@ -8,16 +8,7 @@ final class KeyboardMetalView: MTKView {
     private var mouseTrackingArea: NSTrackingArea?
 
     /// Cursor location in this view's coordinates (macOS points), or nil when unavailable.
-    private(set) var mousePosition: CGPoint? {
-        didSet {
-            if mousePosition == nil { aimCanvasPosition = nil }
-        }
-    }
-
-    /// Changes only when the user moves/drags the pointer or explicitly clicks to aim.
-    private(set) var aimRevision: UInt64 = 0
-    /// The latest intentional target, invalidated when focus, tracking, or coordinates change.
-    private(set) var aimCanvasPosition: SIMD2<Float>?
+    private(set) var mousePosition: CGPoint?
 
     /// Cursor relative to the centered square canvas: (0, 0) at center, +y upward.
     var mouseCanvasPosition: SIMD2<Float>? {
@@ -52,6 +43,15 @@ final class KeyboardMetalView: MTKView {
         if keys.contains("w") { direction.y += 1 }
         if keys.contains("s") { direction.y -= 1 }
         return direction
+    }
+
+    /// Q turns counterclockwise, E turns clockwise; holding both cancels rotation.
+    var rotationDirection: Float {
+        guard window?.isKeyWindow == true,
+              window?.firstResponder === self else { return 0 }
+
+        let keys = Set(pressedKeys.values)
+        return (keys.contains("q") ? 1 : 0) - (keys.contains("e") ? 1 : 0)
     }
 
     override func viewDidMoveToWindow() {
@@ -101,12 +101,11 @@ final class KeyboardMetalView: MTKView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        aimCanvasPosition = nil
         updateMousePosition(inWindow: event.locationInWindow)
     }
 
     override func mouseMoved(with event: NSEvent) {
-        recordAimInput(with: event)
+        updateMousePosition(inWindow: event.locationInWindow)
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -114,31 +113,31 @@ final class KeyboardMetalView: MTKView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        recordAimInput(with: event)
+        updateMousePosition(inWindow: event.locationInWindow)
     }
 
     override func rightMouseDragged(with event: NSEvent) {
-        recordAimInput(with: event)
+        updateMousePosition(inWindow: event.locationInWindow)
     }
 
     override func otherMouseDragged(with event: NSEvent) {
-        recordAimInput(with: event)
+        updateMousePosition(inWindow: event.locationInWindow)
     }
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        recordAimInput(with: event, force: true)
+        updateMousePosition(inWindow: event.locationInWindow)
     }
 
     override func keyDown(with event: NSEvent) {
         // Leave shortcuts such as Command-W to AppKit.
         guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
               let key = event.charactersIgnoringModifiers?.lowercased(),
-              ["w", "a", "s", "d"].contains(key) else {
+              ["w", "a", "s", "d", "q", "e"].contains(key) else {
             super.keyDown(with: event)
             return
         }
-        // Key repeat only keeps this key held; movement happens once per frame.
+        // Key repeat only keeps this key held; movement and rotation happen once per frame.
         pressedKeys[event.keyCode] = key
     }
 
@@ -150,7 +149,6 @@ final class KeyboardMetalView: MTKView {
 
     override func resignFirstResponder() -> Bool {
         pressedKeys.removeAll()
-        aimCanvasPosition = nil
         return super.resignFirstResponder()
     }
 
@@ -165,21 +163,11 @@ final class KeyboardMetalView: MTKView {
     }
 
     private func refreshMousePosition() {
-        aimCanvasPosition = nil
         guard let window, window.isKeyWindow else {
             mousePosition = nil
             return
         }
         updateMousePosition(inWindow: window.mouseLocationOutsideOfEventStream)
-    }
-
-    private func recordAimInput(with event: NSEvent, force: Bool = false) {
-        let previousPosition = mousePosition
-        updateMousePosition(inWindow: event.locationInWindow)
-        if mousePosition != nil && (force || mousePosition != previousPosition) {
-            aimCanvasPosition = mouseCanvasPosition
-            aimRevision &+= 1
-        }
     }
 
     private func updateMousePosition(inWindow location: CGPoint) {

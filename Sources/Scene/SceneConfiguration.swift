@@ -24,8 +24,8 @@ enum SceneConfiguration {
     // Unit forward reach. Rendering extends both axes together to cover the window.
     static let visionScale = SIMD3<Float>(2 * tan(visionFieldOfView / 2), 1, 1)
 
-    // Ignore aiming too close to the player, where tiny pointer changes cause large turns.
-    static let lookDeadZoneRadius: Float = 0.07
+    // Radians per second while holding Q or E (180 degrees per second).
+    static let objectRotationSpeed: Float = .pi
 
     // Canvas units per second for WASD movement of the cone and circle together.
     static let objectMovementSpeed: Float = 0.85

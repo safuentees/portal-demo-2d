@@ -36,8 +36,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let camera = Camera()
     private var lastFrameTime: CFTimeInterval?
     private var movementDirection = SIMD2<Float>.zero
-    private var lastAimRevision: UInt64 = 0
-    private var pendingAimPosition: SIMD2<Float>?
+    private var rotationDirection: Float = 0
 
     /// Latest cursor position in scene coordinates, ready to compare with ObjectPlacement.position.
     private(set) var mousePosition: SIMD2<Float>?
@@ -168,8 +167,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             updateInput(from: inputView)
         } else {
             movementDirection = .zero
+            rotationDirection = 0
             mousePosition = nil
-            pendingAimPosition = nil
         }
         updateScene(deltaTime: deltaTime)
 
@@ -192,17 +191,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Read native input once per frame. Scene behavior consumes this state below.
     func updateInput(from view: KeyboardMetalView) {
         movementDirection = view.movementDirection
+        rotationDirection = view.rotationDirection
         mousePosition = view.mouseCanvasPosition.map { position in
             position + SIMD2(camera.position.x, camera.position.y)
         }
-        if let aimPosition = view.aimCanvasPosition {
-            if view.aimRevision != lastAimRevision {
-                pendingAimPosition = aimPosition + SIMD2(camera.position.x, camera.position.y)
-            }
-        } else {
-            pendingAimPosition = nil
-        }
-        lastAimRevision = view.aimRevision
     }
 
     /// Read an object's current state by name. RenderObject is a value, so this returns a copy.
@@ -240,7 +232,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Scene behavior runs after input is read and before the GPU draws it.
     func updateScene(deltaTime: Float = 0) {
         movePlayer(deltaTime: deltaTime)
-        aimPlayer()
+        rotatePlayer(deltaTime: deltaTime)
         updatePortalClones()
     }
 
@@ -283,17 +275,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
     }
 
-    private func aimPlayer() {
-        // Consume one intentional pointer update. Walking alone keeps the current heading.
-        guard let aimPosition = pendingAimPosition else { return }
-        pendingAimPosition = nil
+    private func rotatePlayer(deltaTime: Float) {
+        guard rotationDirection != 0 else { return }
+        let step = min(max(deltaTime, 0), 0.1)
+        let angle = rotationDirection * SceneConfiguration.objectRotationSpeed * step
         updateObject(.cone) { object in
-            let position = object.placement.position
-            let direction = aimPosition - SIMD2(position.x, position.y)
-            let deadZone = SceneConfiguration.lookDeadZoneRadius
-            guard simd_length_squared(direction) > deadZone * deadZone else { return }
-            // atan2 measures from +X; the mesh's flat edge faces local +Y.
-            object.placement.angle = atan2(direction.y, direction.x) - .pi / 2
+            object.placement.angle += angle
         }
     }
 

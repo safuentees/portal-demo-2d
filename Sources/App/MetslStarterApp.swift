@@ -23,7 +23,7 @@ struct MetslStarterApp: App {
         VStack(spacing: 8) {
             HStack(spacing: 24) {
                 Text("WASD").fontWeight(.semibold) + Text("  Move")
-                Text("Mouse").fontWeight(.semibold) + Text("  Look")
+                Text("Q / E").fontWeight(.semibold) + Text("  Rotate")
             }
             .font(.system(size: 13))
             .foregroundStyle(.white.opacity(0.9))

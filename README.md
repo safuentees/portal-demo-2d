@@ -22,7 +22,7 @@ Get future updates with `git pull --ff-only`. To use this exact starting point, 
 2. Select the **MetslStarter** scheme and **My Mac**.
 3. Press **Command-R**.
 
-Click the scene to focus it. **W/A/S/D** moves the player and its view together: W up, A left, S down, D right. **Move the mouse or click to choose where to look.** The heading stays fixed while walking with a stationary mouse, so moving past the cursor no longer turns the player around. Mouse input very close to the player leaves the heading alone. Movement affects only x/y; depth and camera stay fixed. Releasing the keys or switching windows stops movement. Closing and reopening the window restores the configured scene.
+Click the scene to focus it. **W/A/S/D** moves the player and its view together: W up, A left, S down, D right. **Hold Q to turn left/counterclockwise or E to turn right/clockwise.** Holding both cancels rotation. Mouse movement and clicks no longer change the heading. Movement affects only x/y; depth and camera stay fixed. Releasing the keys or switching windows stops movement and rotation. Closing and reopening the window restores the configured scene.
 
 The project uses SwiftUI, AppKit, MetalKit, Model I/O, and SIMD. There are no external packages or setup commands. It keeps the original macOS 14 minimum and Swift 5 language mode, uses the installed macOS SDK, and uses local ad hoc signing without an Apple development team.
 
@@ -30,7 +30,7 @@ The project uses SwiftUI, AppKit, MetalKit, Model I/O, and SIMD. There are no ex
 
 | Change | File |
 | --- | --- |
-| Object positions, sizes, colors, field of view, movement speed, look dead zone, and canvas padding | `Sources/Scene/SceneConfiguration.swift` |
+| Object positions, sizes, colors, field of view, movement and rotation speeds, and canvas padding | `Sources/Scene/SceneConfiguration.swift` |
 | Object IDs and the initial data for each scene object | `Sources/Scene/SceneObjectConfiguration.swift` |
 | Position, scale, rotation angle, and model transform | `Sources/Scene/ObjectPlacement.swift` |
 | Portal coordinate frames, opening widths, and mapping between the pair | `Sources/Scene/Portal.swift` |
@@ -67,7 +67,7 @@ Add or remove entries to change the object count. Use the named IDs `.bottomBar`
 
 Edit the `.circle` entry to set the player's position and scale; `circleScale` is currently `0.05`, giving a 35-point diameter on the initial 700-point canvas. The circle mesh has radius 1, so scale `(1, 1, 1)` fills the canvas diameter and `(0.5, 0.5, 1)` makes it half as wide. Different x/y scales make an ellipse. `circleSegments` controls edge smoothness (64 by default). The mesh includes a center vertex and a ring of rim vertices; every adjacent pair on the rim forms a triangle with the center, including the closing pair. This fills the circle without a hole or an open seam.
 
-The `.cone` uses the flat triangle mesh. `TriangleMesh.make` flips its vertices 180 degrees once around the center of their bounds, `(0, 0.5)`, before creating the GPU buffer. This preserves the local footprint (`x = -0.5...0.5`, `y = 0...1`) while exchanging the tip and flat end. The resulting tip is at `(0, 0)` and the flat-edge midpoint is at `(0, 1)`. Mouse aiming turns that flat end toward the cursor; WASD moves the cone and circle together.
+The `.cone` uses the flat triangle mesh. `TriangleMesh.make` flips its vertices 180 degrees once around the center of their bounds, `(0, 0.5)`, before creating the GPU buffer. This preserves the local footprint (`x = -0.5...0.5`, `y = 0...1`) while exchanging the tip and flat end. The resulting tip is at `(0, 0)` and the flat-edge midpoint is at `(0, 1)`. Q/E turns the cone around its tip; WASD moves the cone and circle together.
 
 `visionFieldOfView` is `2 * atan(0.62)`, about 63.6 degrees. `visionScale` gives the triangle a unit forward reach and preserves that opening angle. For objects with `extendsVisionToViewport`, the renderer temporarily extends both x/y scales together until the far edge passes the window boundary. This includes the padding and works when the eye is offscreen; resizing does not modify the stored placement. Ordinary triangles retain their configured size.
 
@@ -99,11 +99,11 @@ updateObject(.topBar) { object in
 
 `ObjectPlacement` stores an angle in radians. `Transforms.rotation(angle)` builds the matrix, and `ObjectPlacement.modelMatrix` combines `scale * rotation * translation`. Set `placement.angle` to change orientation; the computed `RenderObject.modelMatrix` remains read-only. Positive angles rotate counterclockwise around the local origin. Scale and rotation happen before translation, so rotating an object keeps its pivot at `placement.position`.
 
-Every `draw(in:)` call runs `updateInput → updateScene(deltaTime:) → encodeFrame`. `updateScene` calls `movePlayer`, `aimPlayer`, and `updatePortalClones` in that order. Movement updates the cone and circle, aiming consumes a new mouse request if one exists, and the default clones then follow the resulting placements through the portal mapping. Without a new aiming request, the current heading is preserved. `encodeFrame` selects the pipeline and supplies the uniforms for each draw. The initial triangle flip is already stored in its mesh vertices.
+Every `draw(in:)` call runs `updateInput → updateScene(deltaTime:) → encodeFrame`. `updateScene` calls `movePlayer`, `rotatePlayer`, and `updatePortalClones` in that order. Movement updates the cone and circle, rotation changes the cone's angle while Q/E is held, and the default clones then follow the resulting placements through the portal mapping. Without rotation input, the current heading is preserved. `encodeFrame` selects the pipeline and supplies the uniforms for each draw. The initial triangle flip is already stored in its mesh vertices.
 
 ## Clone an object
 
-The default `Renderer` initializer creates `.circleClone` and `.coneClone` once during setup. Each frame, `updatePortalClones` maps their source placements from `.bottomBar` into `.topBar`. WASD and mouse input affect the originals; the mapped clones follow automatically. Their green colors are independent of the originals. The default clone placements are overwritten by this update, so use a custom ID for a copy you want to position independently.
+The default `Renderer` initializer creates `.circleClone` and `.coneClone` once during setup. Each frame, `updatePortalClones` maps their source placements from `.bottomBar` into `.topBar`. WASD and Q/E input affect the originals; the mapped clones follow automatically. Their green colors are independent of the originals. The default clone placements are overwritten by this update, so use a custom ID for a copy you want to position independently.
 
 `cloneObject` copies the source's current placement, color, and viewport-extension flag while sharing its GPU mesh. It returns `false` without changing the scene if the source is missing or the new ID is already in use. To create another copy, call this once during setup or in response to an action:
 
@@ -158,6 +158,22 @@ if simd_length_squared(movementDirection) > 0 {
 
 `objectMovementSpeed` is `0.85` canvas units per second and is editable in `SceneConfiguration`. `deltaTime` is the elapsed time between frames, so speed is consistent across frame rates; the 0.1-second cap prevents a large jump after a pause. Normalizing the direction keeps diagonal movement at the same speed. Applying the same offset to both IDs preserves their spacing, and only assigning x/y leaves z unchanged. Movement uses the scene axes regardless of the cone's rotation and continues when the mouse leaves the view.
 
+## Q/E rotation
+
+`KeyboardMetalView.rotationDirection` is `1` while Q is held, `-1` while E is held, and `0` when neither or both are held. It uses the same focus checks and held-key cleanup as WASD. `Renderer.updateInput(from:)` reads this value once per frame.
+
+After movement, `Renderer.rotatePlayer(deltaTime:)` adds a small angle to the cone:
+
+```swift
+let step = min(max(deltaTime, 0), 0.1)
+let angleChange = rotationDirection * SceneConfiguration.objectRotationSpeed * step
+updateObject(.cone) { object in
+    object.placement.angle += angleChange
+}
+```
+
+`SceneConfiguration.objectRotationSpeed` is `.pi` radians per second, or 180 degrees per second. Positive angles turn counterclockwise, so Q turns left and E turns right. Rotation uses elapsed time rather than keyboard repeat, giving smooth turning while a key is held. The angle stays in `ObjectPlacement`; its computed model matrix applies that rotation without changing position or scale. Mouse position is independent of this rotation.
+
 ## Mouse position
 
 `KeyboardMetalView` tracks the cursor while the window is active, including movement while dragging. It stores the latest location in `private(set) var mousePosition: CGPoint?`. AppKit supplies a window-coordinate location; `convert(event.locationInWindow, from: nil)` turns that into this view's coordinates in macOS points.
@@ -170,25 +186,9 @@ Use the coordinate value that matches your work:
 | `inputView.mouseCanvasPosition` | Centered square canvas coordinates: center `(0, 0)`, right edge x = 1, top edge y = 1. |
 | `Renderer.mousePosition` | Scene coordinates, with camera movement accounted for; compare these with `ObjectPlacement.position.x/y`. |
 
-In `Renderer`, `mousePosition` is refreshed every frame for general scene use. A separate `aimRevision` counter in `KeyboardMetalView` changes only for actual pointer movement/dragging or an explicit click, with the target stored in `aimCanvasPosition`. `updateInput(from:)` captures one valid `pendingAimPosition` for each new revision. After keyboard movement, the `aimPlayer()` helper consumes that request:
+In `Renderer`, `mousePosition` is refreshed every frame for future scene interactions. Pointer movement, dragging, clicking, resizing, and focus restoration update the tracked coordinates without changing the cone's angle.
 
-```swift
-guard let aimPosition = pendingAimPosition else { return }
-pendingAimPosition = nil
-updateObject(.cone) { object in
-    let position = object.placement.position
-    let direction = aimPosition - SIMD2(position.x, position.y)
-    let deadZone = SceneConfiguration.lookDeadZoneRadius
-    guard simd_length_squared(direction) > deadZone * deadZone else { return }
-    object.placement.angle = atan2(direction.y, direction.x) - .pi / 2
-}
-```
-
-Subtracting the object's position makes the direction correct even after moving the cone. `atan2` measures from +X; subtracting `pi / 2` aligns the mesh's flat end, which faces local +Y, with the cursor direction. The one-time flip belongs in the mesh builder because it defines the shape's initial orientation. Returning from `aimPlayer` when there is no request still lets `updateScene` continue updating the clones. Normalization is unnecessary for calculating this angle. Each new aiming request assigns an absolute angle rather than accumulating rotation.
-
-The look dead-zone radius is `0.07` canvas units (24.5 points on the initial canvas). Requests inside it are discarded immediately, so an old near-player pointer position cannot start turning the view after later keyboard movement. Mouse entry, resizing, and focus restoration refresh the stored position without requesting a turn. These transitions also invalidate old aim targets, even if no frame ran while the pointer or focus was gone. After walking, moving or clicking the mouse chooses a heading toward its current location; pointer capture and relative mouse steering are not used.
-
-`private(set)` lets other code read the stored state while the owning type controls updates. The optional `?` means there may be no position: the view clears it when the cursor exits or the window loses focus or detaches. Canvas conversion also returns nil if padding leaves no usable canvas. Input tracking records state; `updateScene()` applies it to objects.
+`private(set)` lets other code read the stored state while the owning type controls updates. The optional `?` means there may be no position: the view clears it when the cursor exits or the window loses focus or detaches. Canvas conversion also returns nil if padding leaves no usable canvas. The tracked position remains available independently of keyboard movement and rotation.
 
 For a 900 × 900 view with 100-point padding, the canvas side is 700. Subtract the view center `(450, 450)` from the mouse location, then divide by 350: the center becomes `(0, 0)` and the canvas's top-right corner becomes `(1, 1)`. The input view accounts for AppKit's y-axis orientation, while `Transforms.canvasPosition` performs the inverse of the render transform. Positions in the surrounding padding can exceed -1...1, matching the canvas's unclipped behavior. Using points rather than drawable pixels keeps the result consistent on Retina displays.
 
@@ -215,7 +215,7 @@ The tracking area follows the visible view bounds, and resizing or reactivating 
 ./Scripts/check.sh
 ```
 
-This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover named-object lookup and updates, duplicate ID rejection, WASD key state and focus cleanup, synchronized XY movement and timing, heading preservation without fresh mouse input, look dead-zone consumption, scale/rotation/translation order, placement changes, square canvas fitting and padding, mouse-coordinate conversion and event callbacks, unchanged depth, camera math, Swift/Metal uniform layout, circle and triangle geometry, translated and rotated triangle rendering, alpha blending and depth ordering, mixed square/circle rendering, portal mapping and aperture tests, viewport-reaching vision, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
+This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover named-object lookup and updates, duplicate ID rejection, WASD and Q/E key state and focus cleanup, synchronized XY movement and timing, held-key rotation and cancellation, heading preservation during mouse input, scale/rotation/translation order, placement changes, square canvas fitting and padding, mouse-coordinate conversion and event callbacks, unchanged depth, camera math, Swift/Metal uniform layout, circle and triangle geometry, translated and rotated triangle rendering, alpha blending and depth ordering, mixed square/circle rendering, portal mapping and aperture tests, viewport-reaching vision, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
 
 To build Release:
 
