@@ -259,17 +259,19 @@ final class Renderer: NSObject, MTKViewDelegate {
                 
                 let t1 = -A1.y / (B1.y - A1.y)
                 let hit1 = A1 + t1 * (B1 - A1)
+                var rot = 0.0
                 
                 if abs(hit.x) <= entrance!.halfWidth && t >= 0 && t <= 1 {
                     let pair = PortalPair(entrance: entrance!, exit: exit!)
                     after = pair.mappedPlacement(object.placement).position
+                    rot = .pi
                 } else if abs(hit1.x) <= exit!.halfWidth && t1 >= 0 && t1 <= 1 {
                     let pair = PortalPair(entrance: exit!, exit: entrance!)
                     after = pair.mappedPlacement(object.placement).position
+                    rot = .pi
                 }
                 
-                
-                
+                object.placement.angle += Float(rot)
                 object.placement.position = after
             }
         }
