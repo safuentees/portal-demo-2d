@@ -240,39 +240,29 @@ final class Renderer: NSObject, MTKViewDelegate {
         guard simd_length_squared(movementDirection) > 0 else { return }
         // Keep speed consistent diagonally and across frame rates; cap long pauses.
         let step = min(max(deltaTime, 0), 0.1)
+        guard step > 0 else { return }
         let offset = simd_normalize(movementDirection) * SceneConfiguration.objectMovementSpeed * step
-        for id: SceneObjectID in [.cone, .circle] {
+        let displacement = SIMD3<Float>(offset.x, offset.y, 0)
+
+        // The body's center decides the crossing once for both body and vision.
+        guard let player = object(withID: .circle) ?? object(withID: .cone) else { return }
+        let before = player.placement.position
+        let after = before + displacement
+        let crossedPair = currentPortalPair()?.firstCrossing(from: before, to: after)
+        let exitOffset = crossedPair?.exitClearanceOffset(from: before, to: after) ?? .zero
+
+        for id: SceneObjectID in [.circle, .cone] {
             updateObject(id) { object in
-                let before = object.placement.position
-                var after = before + SIMD3(offset.x, offset.y, 0)
-                let entrance = portalFrame(for: .bottomBar)
-                let exit = portalFrame(for: .topBar)
-                
-                let A = SIMD4(before, 1.0) * entrance!.worldToLocal
-                let B = SIMD4(after, 1.0)  * entrance!.worldToLocal
-                
-                let t = -A.y / (B.y - A.y)
-                let hit = A + t * (B - A)
-                
-                let A1 = SIMD4(before, 1.0) * exit!.worldToLocal
-                let B1 = SIMD4(after, 1.0)  * exit!.worldToLocal
-                
-                let t1 = -A1.y / (B1.y - A1.y)
-                let hit1 = A1 + t1 * (B1 - A1)
-                var rot = 0.0
-                
-                if abs(hit.x) <= entrance!.halfWidth && t >= 0 && t <= 1 {
-                    let pair = PortalPair(entrance: entrance!, exit: exit!)
-                    after = pair.mappedPlacement(object.placement).position
-                    rot = .pi
-                } else if abs(hit1.x) <= exit!.halfWidth && t1 >= 0 && t1 <= 1 {
-                    let pair = PortalPair(entrance: exit!, exit: entrance!)
-                    after = pair.mappedPlacement(object.placement).position
-                    rot = .pi
+                var placement = object.placement
+                placement.position += displacement
+                if let crossedPair {
+                    // Map the proposed placement, including its heading and movement past the opening.
+                    placement = crossedPair.mappedPlacement(placement)
+                    placement.position += exitOffset
+                    // In this flat scene z controls drawing order, not physical travel.
+                    placement.position.z = object.placement.position.z
                 }
-                
-                object.placement.angle += Float(rot)
-                object.placement.position = after
+                object.placement = placement
             }
         }
     }
@@ -290,10 +280,14 @@ final class Renderer: NSObject, MTKViewDelegate {
         object(withID: id).map { PortalFrame(placement: $0.placement) }
     }
 
-    private func updatePortalClones() {
+    private func currentPortalPair() -> PortalPair? {
         guard let entrance = portalFrame(for: .bottomBar),
-              let exit = portalFrame(for: .topBar) else { return }
-        let pair = PortalPair(entrance: entrance, exit: exit)
+              let exit = portalFrame(for: .topBar) else { return nil }
+        return PortalPair(entrance: entrance, exit: exit)
+    }
+
+    private func updatePortalClones() {
+        guard let pair = currentPortalPair() else { return }
         for (sourceID, cloneID) in Self.portalClonePairs {
             guard let source = object(withID: sourceID) else { continue }
             // Always map the original so repeated updates cannot accumulate drift.

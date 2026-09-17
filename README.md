@@ -1,6 +1,6 @@
 # Metsl Starter
 
-A ready-to-run macOS Metal project based on `metsl-macOS`, with a circular player, a translucent field of view, and two portal bars. The current experiment maps a cloned player and view between the bars and clips their visible fragments at the openings. Movement does not teleport the player, and there is no collision handling. The window, keyboard controls, GPU setup, and shaders are wired together; sphere geometry is also available for experiments.
+A ready-to-run macOS Metal project based on `metsl-macOS`, with a circular player, a translucent field of view, and two portal bars. Crossing an opening with the player's center transfers the player and its view through the portal pair. Mapped clones and fragment clipping show the portal view. Full-body collision handling is not implemented. The window, keyboard controls, GPU setup, and shaders are wired together; sphere geometry is also available for experiments.
 
 ## Version and repository
 
@@ -33,7 +33,7 @@ The project uses SwiftUI, AppKit, MetalKit, Model I/O, and SIMD. There are no ex
 | Object positions, sizes, colors, field of view, movement and rotation speeds, and canvas padding | `Sources/Scene/SceneConfiguration.swift` |
 | Object IDs and the initial data for each scene object | `Sources/Scene/SceneObjectConfiguration.swift` |
 | Position, scale, rotation angle, and model transform | `Sources/Scene/ObjectPlacement.swift` |
-| Portal coordinate frames, opening widths, and mapping between the pair | `Sources/Scene/Portal.swift` |
+| Portal frames, opening widths, movement crossings, and placement mapping | `Sources/Scene/Portal.swift` |
 | Mesh, placement, color, and viewport-extension flag for one rendered object | `Sources/Rendering/RenderObject.swift` |
 | Vertex transforms, portal intersection tests, and fragment visibility | `Sources/Shaders/Shaders.metal` |
 | Scene updates, pipeline selection, uniforms, and drawing | `Sources/Rendering/Renderer.swift` |
@@ -99,7 +99,7 @@ updateObject(.topBar) { object in
 
 `ObjectPlacement` stores an angle in radians. `Transforms.rotation(angle)` builds the matrix, and `ObjectPlacement.modelMatrix` combines `scale * rotation * translation`. Set `placement.angle` to change orientation; the computed `RenderObject.modelMatrix` remains read-only. Positive angles rotate counterclockwise around the local origin. Scale and rotation happen before translation, so rotating an object keeps its pivot at `placement.position`.
 
-Every `draw(in:)` call runs `updateInput → updateScene(deltaTime:) → encodeFrame`. `updateScene` calls `movePlayer`, `rotatePlayer`, and `updatePortalClones` in that order. Movement updates the cone and circle, rotation changes the cone's angle while Q/E is held, and the default clones then follow the resulting placements through the portal mapping. Without rotation input, the current heading is preserved. `encodeFrame` selects the pipeline and supplies the uniforms for each draw. The initial triangle flip is already stored in its mesh vertices.
+Every `draw(in:)` call runs `updateInput → updateScene(deltaTime:) → encodeFrame`. `updateScene` calls `movePlayer`, `rotatePlayer`, and `updatePortalClones` in that order. Movement updates the circle and cone together and maps their full placements if the player's center crosses a portal. Q/E then adds its rotation to the cone's resulting angle, including after a teleport, and the default clones follow the updated placements. The heading stays fixed when neither traversal nor rotation changes it. `encodeFrame` selects the pipeline and supplies the uniforms for each draw. The initial triangle flip is already stored in its mesh vertices.
 
 ## Clone an object
 
@@ -122,7 +122,7 @@ updateObject(.custom("anotherCircle")) { clone in
 
 Each clone has its own placement and color; changing them does not change the original. The shared mesh means edits to its underlying vertex buffers would affect both. The explicit `Renderer(view:library:sceneObjects:)` initializer builds exactly the supplied scene, without adding the default clones.
 
-## Portal mapping and visibility
+## Portal mapping, traversal, and visibility
 
 `PortalFrame` in `Sources/Scene/Portal.swift` contains a rigid local-to-world frame, its inverse, and the opening's half-width. A bar's position and angle define its frame; its x scale determines the opening width. Visual thickness does not scale the coordinate frame. `PortalPair` maps placements using the current row-vector transform:
 
@@ -131,32 +131,36 @@ transfer = inverse(entranceFrame) * exitFrame
 mappedPosition = originalPosition * transfer
 ```
 
-Positions use homogeneous `w = 1`; directions use `w = 0` so translation cannot change the heading. Mapping preserves the source scale and always starts from the original placement, avoiding accumulated changes to the clone. The current entrance is `.bottomBar` and the exit is `.topBar`. No extra half-turn is added to this mapping.
+Positions use homogeneous `w = 1`; directions use `w = 0` so translation cannot change the heading. `mappedPlacement` maps both position and heading while preserving scale. Traversal maps the proposed placement after this frame's movement, preserving any distance traveled past the opening. Clone updates map their original object's current placement instead of accumulating changes to the clone. The matrix convention stays `inverse(entranceFrame) * exitFrame`; there is no extra half-turn or hardcoded `.pi` rotation.
+
+`PortalFrame.crossingFraction(from:to:)` tests the movement segment in portal-local coordinates. It accepts crossings from either side of `y = 0` within the opening width, including movement that ends exactly on the plane. Parallel motion and movement starting on the plane do not count. `PortalPair.firstCrossing` checks both bars and selects the earliest hit, reversing the directed pair when entering through `.topBar`. Missing or zero-width portals disable traversal.
+
+`movePlayer` makes that crossing decision once using the circle's center, with the cone as a fallback when the circle is absent. It applies the same directed mapping to both proposed placements. Their sizes stay unchanged, and each object's original z is restored because z controls rendering layers in this flat scene. `exitClearanceOffset` adds one shared, tiny offset only when the mapped center is within `0.00001` units of the exit plane. It places the center on the side of the mapped motion to prevent rounding from producing another crossing; it does not add a cooldown or change ordinary movement past the opening.
 
 The shader's `intersectsPortal` checks whether the segment from an object's center to a fragment crosses a finite opening. `intersectsEitherPortal` combines the two opening tests. Original `.circle` and `.cone` fragments disappear when that result is true; `.circleClone` and `.coneClone` fragments appear when it is true. Other IDs use the ordinary color pipeline. Opening half-widths come from the bars' current x scales; missing or zero-width openings are disabled rather than replaced with an opening at the origin.
 
-The current equal-width bars face 180 degrees apart, making this particular transfer its own inverse. That lets the single mapped clone serve either opening in this arrangement. General two-way links with independently rotated portals need separate mappings. Circle ray clipping remains an experiment: the retained side changes when its center crosses the plane, and this does not implement physical body traversal or teleportation.
+The current equal-width bars face 180 degrees apart, making this particular transfer its own inverse. That lets the single mapped clone serve either opening in this arrangement. Traversal selects either directed pair, but general two-way cloned views with independently rotated portals still need separate mappings. Recursive portal views are not implemented. Circle ray clipping remains experimental; center-based traversal does not test whether the whole body fits through an opening or collides with its edges. At most one crossing is processed per movement update.
 
 ## WASD movement
 
 `KeyboardMetalView.movementDirection` converts the held keys into a 2D vector: W `(0, 1)`, A `(-1, 0)`, S `(0, -1)`, D `(1, 0)`. Opposite keys cancel. The view supplies zero when its window is inactive or it is not the first responder, and clears held keys when focus is lost. `Renderer.updateInput(from:)` copies that direction once per frame.
 
-`Renderer.movePlayer(deltaTime:)`, called by `updateScene`, applies this movement calculation:
+`Renderer.movePlayer(deltaTime:)` computes the frame's XY `displacement`, finds one `crossedPair` from the player's center movement, and obtains its shared `exitOffset`. Inside the update for each of `.circle` and `.cone`, the placement changes like this:
 
 ```swift
-if simd_length_squared(movementDirection) > 0 {
-    let step = min(max(deltaTime, 0), 0.1)
-    let offset = simd_normalize(movementDirection) * SceneConfiguration.objectMovementSpeed * step
-    for id: SceneObjectID in [.cone, .circle] {
-        updateObject(id) { object in
-            object.placement.position.x += offset.x
-            object.placement.position.y += offset.y
-        }
-    }
+var placement = object.placement
+placement.position += displacement
+if let crossedPair {
+    placement = crossedPair.mappedPlacement(placement)
+    placement.position += exitOffset
+    placement.position.z = object.placement.position.z
 }
+object.placement = placement
 ```
 
-`objectMovementSpeed` is `0.85` canvas units per second and is editable in `SceneConfiguration`. `deltaTime` is the elapsed time between frames, so speed is consistent across frame rates; the 0.1-second cap prevents a large jump after a pause. Normalizing the direction keeps diagonal movement at the same speed. Applying the same offset to both IDs preserves their spacing, and only assigning x/y leaves z unchanged. Movement uses the scene axes regardless of the cone's rotation and continues when the mouse leaves the view.
+`objectMovementSpeed` is `0.85` canvas units per second and is editable in `SceneConfiguration`. `deltaTime` is the elapsed time between frames, so speed is consistent across frame rates; the 0.1-second cap prevents a large jump after a pause. Normalizing the direction keeps diagonal movement at the same speed. A shared crossing decision keeps the circle and cone together, and their rendering depths remain unchanged. Movement continues when the mouse leaves the view.
+
+WASD keeps using world axes after traversal. With the current portal mapping, holding the same key can reverse the mapped exit motion and cause a real crossing back through the portal. Input directions are not automatically rotated, and there is no cooldown suppressing that crossing.
 
 ## Q/E rotation
 
@@ -215,7 +219,7 @@ The tracking area follows the visible view bounds, and resizing or reactivating 
 ./Scripts/check.sh
 ```
 
-This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover named-object lookup and updates, duplicate ID rejection, WASD and Q/E key state and focus cleanup, synchronized XY movement and timing, held-key rotation and cancellation, heading preservation during mouse input, scale/rotation/translation order, placement changes, square canvas fitting and padding, mouse-coordinate conversion and event callbacks, unchanged depth, camera math, Swift/Metal uniform layout, circle and triangle geometry, translated and rotated triangle rendering, alpha blending and depth ordering, mixed square/circle rendering, portal mapping and aperture tests, viewport-reaching vision, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
+This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover named-object lookup and updates, duplicate ID rejection, WASD and Q/E key state and focus cleanup, synchronized XY movement and timing, held-key rotation and cancellation, heading preservation during mouse input, scale/rotation/translation order, placement changes, square canvas fitting and padding, mouse-coordinate conversion and event callbacks, unchanged depth, camera math, Swift/Metal uniform layout, circle and triangle geometry, translated and rotated triangle rendering, alpha blending and depth ordering, mixed square/circle rendering, portal mapping and aperture tests, center crossings and mapped movement/headings, viewport-reaching vision, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
 
 To build Release:
 

@@ -183,6 +183,7 @@ struct SmokeTests {
         try checkCanvasPosition()
         try checkVisionScale()
         try checkPortalFrames()
+        try checkPortalCrossings()
 
         var straight = Camera()
         var diagonal = Camera()
@@ -242,6 +243,62 @@ struct SmokeTests {
         try expect(simd_distance(restored.position, original.position) < 0.0001
                    && abs(restored.angle - original.angle) < 0.0001 && restored.scale == original.scale,
                    "Reversing a portal pair must restore the original placement.")
+    }
+
+    static func checkPortalCrossings() throws {
+        let frame = PortalFrame(placement: ObjectPlacement(scale: [0.8, 0.03, 1]))
+        let segments: [(SIMD3<Float>, SIMD3<Float>, Float?)] = [
+            ([0, -0.4, 0.2], [0, 0.6, 0.7], 0.4),
+            ([0, 0.6, 0.7], [0, -0.4, 0.2], 0.6),
+            ([0, -0.00000001, 0], [0, 0.00000001, 0], 0.5), // Tiny sign changes still cross.
+            ([0.4, -1, 0], [0.4, 1, 0], 0.5), // The opening includes its horizontal edges.
+            ([0, -1, 0], [0, 0, 0], 1),       // Arriving exactly on the plane counts.
+            ([0, 0, 0], [0, 1, 0], nil),      // Starting on the plane is not a new crossing.
+            ([-0.1, 0.2, 0], [0.1, 0.2, 0], nil),
+            ([0.41, -1, 0], [0.41, 1, 0], nil),
+            ([0, -1, 0], [0, -0.2, 0], nil),
+        ]
+        for (from, to, expected) in segments {
+            let actual = frame.crossingFraction(from: from, to: to)
+            if let expected {
+                try expect(actual.map { abs($0 - expected) < 0.0001 } == true,
+                           "Portal movement must report the actual segment crossing fraction.")
+            } else {
+                try expect(actual == nil, "Parallel, same-side, outside, or starting-plane segments must not cross.")
+            }
+        }
+        let rotated = PortalFrame(placement: ObjectPlacement(position: [0.2, -0.3, 0.8],
+                                                              scale: [0.8, 0.03, 1], angle: 0.73))
+        let normal = SIMD3<Float>(-sin(0.73), cos(0.73), 0)
+        let center = SIMD3<Float>(0.2, -0.3, 0.2)
+        try expect(rotated.crossingFraction(from: center - normal * 0.1, to: center + normal * 0.3)
+            .map { abs($0 - 0.25) < 0.0001 } == true, "Crossing tests must use the portal's rotated plane.")
+
+        let upper = PortalFrame(placement: ObjectPlacement(position: [0, 0.1, 0], scale: [1.2, 1, 1]))
+        let closePair = PortalPair(entrance: upper, exit: frame)
+        let forward = closePair.firstCrossing(from: [0, -0.1, 0], to: [0, 0.2, 0])
+        let reverse = closePair.firstCrossing(from: [0, 0.2, 0], to: [0, -0.1, 0])
+        try expect(forward?.entrance.halfWidth == frame.halfWidth
+                   && reverse?.entrance.halfWidth == upper.halfWidth,
+                   "When a step crosses both portals, select the earliest crossing in either direction.")
+        let closed = PortalFrame(placement: ObjectPlacement(scale: [0, 1, 1]))
+        try expect(closed.crossingFraction(from: [0, -1, 0], to: [0, 1, 0]) == nil
+                   && PortalPair(entrance: closed, exit: upper).firstCrossing(from: [0, -1, 0], to: [0, 1, 0]) == nil
+                   && PortalPair(entrance: upper, exit: closed).firstCrossing(from: [0, -1, 0], to: [0, 1, 0]) == nil,
+                   "A crossing requires both an open entrance and an open exit.")
+
+        let pair = PortalPair(entrance: frame, exit: rotated)
+        for sign: Float in [-1, 1] {
+            let from = SIMD3<Float>(0, -sign * 0.1, 0.4), to = SIMD3<Float>(0, 0, 0.4)
+            let clearance = pair.exitClearanceOffset(from: from, to: to)
+            let mappedEnd = SIMD4<Float>(to, 1) * pair.transferMatrix
+            let clearedEnd = (mappedEnd + SIMD4<Float>(clearance, 0)) * rotated.worldToLocal
+            try expect(clearance.z == 0 && simd_length(clearance) <= 0.00003
+                       && clearedEnd.y * sign > 0 && abs(simd_dot(clearance, SIMD3<Float>(cos(0.73), sin(0.73), 0))) < 0.000001,
+                       "Exact-plane arrivals need only a tiny XY clearance along the outgoing portal normal.")
+        }
+        try expect(pair.exitClearanceOffset(from: [0, -0.1, 0.4], to: [0, 0.1, 0.4]) == .zero,
+                   "Movement already beyond the exit plane must keep its full mapped endpoint without a nudge.")
     }
 
     static func checkCanvasMath() throws {
@@ -724,6 +781,11 @@ struct SmokeTests {
         try expectMovement(combined, displacement: [0, step])
         try expectAngle(combined, expectedAngle)
         try expect(combined.mousePosition == nil, "A non-input view must clear pointer, movement, and rotation input.")
+        view.keyUp(with: try keyEvent("w", code: 13, type: .keyUp))
+        view.keyUp(with: try keyEvent("q", code: 12, type: .keyUp))
+        try checkPortalMovement(view: view, library: library)
+        view.keyDown(with: try keyEvent("w", code: 13))
+        view.keyDown(with: try keyEvent("q", code: 12))
         window.contentView = NSView(frame: view.frame)
         try expect(view.movementDirection == .zero && view.rotationDirection == 0,
                    "Detaching the view must clear held movement and rotation keys.")
@@ -732,6 +794,118 @@ struct SmokeTests {
         try expect(view.movementDirection == .zero && view.rotationDirection == 0,
                    "Reattaching the view must not restore previously held keys.")
         print("PASS: held WASD and Q/E, independent movement/rotation, frame timing, fixed pivot, clone rotation, GPU rotation")
+    }
+
+    @MainActor
+    static func checkPortalMovement(view: KeyboardMetalView, library: MTLLibrary) throws {
+        guard let window = view.window else { throw Failure(description: "Portal movement needs an attached input view.") }
+        let step = SceneConfiguration.objectMovementSpeed * 0.1
+        let offset = SIMD3<Float>(0, step, 0)
+        let entrance = ObjectPlacement(position: [0.2, -0.2, 0.7], scale: [0.8, 0.03, 1], angle: 0.3)
+        let exit = ObjectPlacement(position: [-0.5, 0.6, 0.1], scale: [0.6, 0.05, 1], angle: -0.8)
+        func scene(circle: ObjectPlacement?, cone: ObjectPlacement,
+                   entrance: ObjectPlacement?, exit: ObjectPlacement?) -> [SceneObjectConfiguration] {
+            var objects = [SceneObjectConfiguration(id: .cone, geometry: .triangle, placement: cone)]
+            if let circle { objects.append(SceneObjectConfiguration(id: .circle, geometry: .circle, placement: circle)) }
+            if let entrance { objects.append(SceneObjectConfiguration(id: .bottomBar, geometry: .square, placement: entrance)) }
+            if let exit { objects.append(SceneObjectConfiguration(id: .topBar, geometry: .square, placement: exit)) }
+            return objects
+        }
+        func move(_ objects: [SceneObjectConfiguration], key: String = "w") throws -> Renderer {
+            let renderer = try Renderer(view: view, library: library, sceneObjects: objects)
+            func event(_ type: NSEvent.EventType) throws -> NSEvent {
+                guard let event = NSEvent.keyEvent(
+                    with: type, location: .zero, modifierFlags: [], timestamp: 0,
+                    windowNumber: window.windowNumber, context: nil, characters: key,
+                    charactersIgnoringModifiers: key, isARepeat: false, keyCode: key == "w" ? 13 : 2
+                ) else { throw Failure(description: "Could not construct the portal movement key event.") }
+                return event
+            }
+            view.keyDown(with: try event(.keyDown))
+            renderer.updateInput(from: view)
+            renderer.updateScene(deltaTime: 0.1)
+            view.keyUp(with: try event(.keyUp))
+            return renderer
+        }
+        // Independent 2D frame equations: map the proposed endpoint, then preserve render depth.
+        func expected(_ original: ObjectPlacement, from: ObjectPlacement, to: ObjectPlacement) -> ObjectPlacement {
+            let delta = original.position + offset - from.position
+            let localX = delta.x * cos(from.angle) + delta.y * sin(from.angle)
+            let localY = -delta.x * sin(from.angle) + delta.y * cos(from.angle)
+            var result = original
+            result.position = [to.position.x + localX * cos(to.angle) - localY * sin(to.angle),
+                               to.position.y + localX * sin(to.angle) + localY * cos(to.angle), original.position.z]
+            let angle = original.angle - from.angle + to.angle
+            result.angle = atan2(sin(angle), cos(angle))
+            return result
+        }
+        for (reversed, includesCircle) in [(false, true), (true, true), (false, false)] {
+            let from = reversed ? exit : entrance, to = reversed ? entrance : exit
+            let circle = ObjectPlacement(position: [from.position.x, from.position.y - step / 2, 0.2],
+                                         scale: [0.04, 0.06, 1.7], angle: 0.31)
+            var cone = ObjectPlacement(position: circle.position, scale: [0.5, 0.4, 2.3], angle: -0.4)
+            // The cone is already across the plane: the body must choose the transfer for both.
+            if includesCircle { cone.position += [0.06, step * 1.5, 0] }
+            cone.position.z = 0.6
+            let configurations = scene(circle: includesCircle ? circle : nil, cone: cone, entrance: entrance, exit: exit)
+            let renderer = try move(configurations)
+            for configuration in configurations {
+                guard let actual = renderer.object(withID: configuration.id) else {
+                    throw Failure(description: "A portal movement fixture disappeared.")
+                }
+                let player = configuration.id == .circle || configuration.id == .cone
+                let placement = player ? expected(configuration.placement, from: from, to: to) : configuration.placement
+                try expect(simd_distance(actual.placement.position, placement.position) < 0.00001
+                           && abs(actual.placement.angle - placement.angle) < 0.00001
+                           && actual.placement.scale == placement.scale && actual.color == configuration.color,
+                           "Portal crossing must map both proposed positions and headings coherently, preserving depth, scale, and other objects.")
+            }
+        }
+
+        let axisEntrance = ObjectPlacement(position: [0, 0, 0.7], scale: [0.8, 0.03, 1])
+        let axisExit = ObjectPlacement(position: [0.5, 0.5, 0.1], scale: [0.8, 0.03, 1], angle: 0.7)
+        let arrival = ObjectPlacement(position: [0, -step, 0.2], scale: [0.04, 0.06, 1.7], angle: 0.31)
+        let cone = ObjectPlacement(position: [0.06, step / 2, 0.6], scale: [0.5, 0.4, 2.3], angle: -0.4)
+        let arrived = try move(scene(circle: arrival, cone: cone, entrance: axisEntrance, exit: axisExit))
+        let expectedBody = expected(arrival, from: axisEntrance, to: axisExit)
+        let expectedCone = expected(cone, from: axisEntrance, to: axisExit)
+        guard let bodyAfter = arrived.object(withID: .circle), let coneAfter = arrived.object(withID: .cone) else {
+            throw Failure(description: "Exact-endpoint movement lost a player object.")
+        }
+        let clearance = bodyAfter.placement.position - expectedBody.position
+        let outgoing = SIMD3<Float>(-sin(axisExit.angle), cos(axisExit.angle), 0)
+        try expect(clearance.z == 0 && simd_dot(clearance, outgoing) > 0 && simd_length(clearance) <= 0.00003
+                   && simd_distance(coneAfter.placement.position - expectedCone.position, clearance) < 0.000001,
+                   "An exact-plane arrival must apply the same tiny outgoing clearance to body and cone.")
+        arrived.updateInput(from: view) // Key-up: an idle frame must not transfer back from the exit plane.
+        arrived.updateScene(deltaTime: 0.1)
+        try expect(arrived.object(withID: .circle)?.placement.position == bodyAfter.placement.position
+                   && arrived.object(withID: .cone)?.placement.position == coneAfter.placement.position,
+                   "Stopping after an exact endpoint must retain the transferred placement.")
+
+        var closed = axisEntrance
+        closed.scale.x = 0
+        let unavailable: [(ObjectPlacement?, ObjectPlacement?)] = [
+            (nil, nil), (axisEntrance, nil), (nil, axisExit), (closed, axisExit), (axisEntrance, closed),
+        ]
+        for (entrance, exit) in unavailable {
+            let renderer = try move(scene(circle: arrival, cone: cone, entrance: entrance, exit: exit))
+            for (id, before): (SceneObjectID, ObjectPlacement) in [(.circle, arrival), (.cone, cone)] {
+                try expect(renderer.object(withID: id)?.placement.position == before.position + offset
+                           && renderer.object(withID: id)?.placement.angle == before.angle,
+                           "Missing or closed portal pairs must allow ordinary movement without a transfer or crash.")
+            }
+        }
+        for (position, key, delta): (SIMD3<Float>, String, SIMD3<Float>) in [
+            ([0, -0.1, 0.2], "d", [step, 0, 0]), ([0.6, -step / 2, 0.2], "w", offset),
+        ] {
+            let placement = ObjectPlacement(position: position, scale: [0.04, 0.06, 1], angle: 0.31)
+            let renderer = try move(scene(circle: placement, cone: placement, entrance: axisEntrance, exit: axisExit), key: key)
+            try expect(renderer.object(withID: .circle)?.placement.position == position + delta
+                       && renderer.object(withID: .cone)?.placement.position == position + delta,
+                       "Parallel movement and segments outside the finite opening must not teleport.")
+        }
+        print("PASS: rotated and reverse portal movement, shared body/cone transfer, proposed endpoint, depth, clearance, missing portals")
     }
 
     @MainActor
