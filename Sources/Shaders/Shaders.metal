@@ -8,6 +8,7 @@ struct VertexIn {
 struct VertexOut {
     float4 position [[position]];
     float2 worldPosition;
+    float2 localPosition;
 };
 
 // Match the field order and types in Rendering/ShaderUniforms.swift.
@@ -22,6 +23,7 @@ struct ShaderUniforms {
     float4 eyeInExit;
     float2 resolution;
     float2 portalHalfWidths;
+    float visionFeatherPixels;
 };
 
 vertex VertexOut object_vertex(
@@ -36,6 +38,7 @@ vertex VertexOut object_vertex(
         * uniforms.viewMatrix
         * uniforms.canvasMatrix;
     out.worldPosition = world.xy;
+    out.localPosition = input.position;
 
     return out;
 }
@@ -76,10 +79,71 @@ inline bool intersectsEitherPortal(
         || intersectsPortal(uniforms.eyeInExit.xy, exitPosition, uniforms.portalHalfWidths.y);
 }
 
+// Fade inward from the triangle's two sides and far edge. Its tip is at (0, 0).
+inline float coneCoverage(float2 localPosition, float featherPixels) {
+    float3 margins = float3(
+        0.5 * localPosition.y - localPosition.x,
+        0.5 * localPosition.y + localPosition.x,
+        1.0 - localPosition.y
+    );
+    float3 widths = max(fwidth(margins) * featherPixels, float3(0.000001));
+    float3 coverage = smoothstep(float3(0.0), widths, margins);
+    return min(coverage.x, min(coverage.y, coverage.z));
+}
+
+inline float cross2D(float2 first, float2 second) {
+    return first.x * second.y - first.y * second.x;
+}
+
+// Continuous coverage of the region beyond an opening, bounded by its two sightlines.
+inline float portalCoverage(float2 eye, float2 point, float halfWidth, float featherPixels) {
+    // These values are uniform for the draw, so every fragment takes the same branch.
+    if (halfWidth <= 0.0 || eye.y == 0.0)
+        return 0.0;
+
+    float side = sign(eye.y);
+    // The eye is off the plane, so neither ray can have zero length.
+    float2 leftRay = normalize(float2(-halfWidth, 0.0) - eye);
+    float2 rightRay = normalize(float2(halfWidth, 0.0) - eye);
+    float2 toPoint = point - eye;
+    float3 margins = float3(
+        -side * point.y,
+        side * cross2D(leftRay, toPoint),
+        -side * cross2D(rightRay, toPoint)
+    );
+
+    // Derivatives convert each boundary's margin to pixels, without dividing by ray dy.
+    float3 widths = max(fwidth(margins) * featherPixels, float3(0.000001));
+    float3 coverage = smoothstep(-0.5 * widths, 0.5 * widths, margins);
+    return min(coverage.x, min(coverage.y, coverage.z));
+}
+
+inline float eitherPortalCoverage(float2 worldPosition, constant ShaderUniforms &uniforms) {
+    float4 world = float4(worldPosition, 0.0, 1.0);
+    float2 entrancePosition = (world * uniforms.worldToEntrance).xy;
+    float2 exitPosition = (world * uniforms.worldToExit).xy;
+    float entranceCoverage = portalCoverage(
+        uniforms.eyeInEntrance.xy, entrancePosition,
+        uniforms.portalHalfWidths.x, uniforms.visionFeatherPixels
+    );
+    float exitCoverage = portalCoverage(
+        uniforms.eyeInExit.xy, exitPosition,
+        uniforms.portalHalfWidths.y, uniforms.visionFeatherPixels
+    );
+    // Union the openings without increasing opacity where their coverage overlaps.
+    return max(entranceCoverage, exitCoverage);
+}
+
 fragment float4 portal_fragment(
     VertexOut input [[stage_in]],
     constant ShaderUniforms &uniforms [[buffer(1)]]
 ) {
+    if (uniforms.visionFeatherPixels > 0.0) {
+        float visibility = 1.0 - eitherPortalCoverage(input.worldPosition, uniforms);
+        float coverage = coneCoverage(input.localPosition, uniforms.visionFeatherPixels) * visibility;
+        return float4(uniforms.color.rgb, uniforms.color.a * coverage);
+    }
+
     // Original player and vision keep pixels on the near side of the openings.
     if (intersectsEitherPortal(input.worldPosition, uniforms))
         discard_fragment();
@@ -91,6 +155,12 @@ fragment float4 portal_clone_fragment(
     VertexOut input [[stage_in]],
     constant ShaderUniforms &uniforms [[buffer(1)]]
 ) {
+    if (uniforms.visionFeatherPixels > 0.0) {
+        float visibility = eitherPortalCoverage(input.worldPosition, uniforms);
+        float coverage = coneCoverage(input.localPosition, uniforms.visionFeatherPixels) * visibility;
+        return float4(uniforms.color.rgb, uniforms.color.a * coverage);
+    }
+
     // Cloned player and vision use the complementary visibility mask.
     if (!intersectsEitherPortal(input.worldPosition, uniforms))
         discard_fragment();

@@ -97,6 +97,7 @@ struct SmokeTests {
         try checkPortalIntersection(device: device, queue: queue)
         try checkPortalMasks(view: view, library: library, device: device, queue: queue)
         try checkViewportVision(view: view, library: library, device: device, queue: queue)
+        try checkVisionFeathering(view: view, library: library, device: device, queue: queue)
         let renderer = try Renderer(
             view: view, library: library, sceneObjects: sceneObjects(squares: placements)
         )
@@ -198,10 +199,10 @@ struct SmokeTests {
         paused.update(direction: [0, 0, 1], deltaTime: 100)
         try expect(abs(paused.position.z - SceneConfiguration.cameraSpeed * 0.1) < 0.0001,
                    "A debugger pause must not cause a camera jump.")
-        try expect(MemoryLayout<ShaderUniforms>.size == 384
-                   && MemoryLayout<ShaderUniforms>.stride == 384
+        try expect(MemoryLayout<ShaderUniforms>.size == 388
+                   && MemoryLayout<ShaderUniforms>.stride == 400
                    && MemoryLayout<ShaderUniforms>.alignment == 16,
-                   "Swift/Metal uniforms must include both portal frames, resolution, and opening widths with 16-byte alignment.")
+                   "Swift/Metal uniforms must include vision feathering with a 400-byte aligned stride.")
         try expect(MemoryLayout<ShaderUniforms>.offset(of: \.canvasMatrix) == 128,
                    "Swift/Metal uniform canvas matrix offset changed.")
         try expect(MemoryLayout<ShaderUniforms>.offset(of: \.color) == 192,
@@ -211,8 +212,9 @@ struct SmokeTests {
                    && MemoryLayout<ShaderUniforms>.offset(of: \.worldToExit) == 288
                    && MemoryLayout<ShaderUniforms>.offset(of: \.eyeInExit) == 352
                    && MemoryLayout<ShaderUniforms>.offset(of: \.resolution) == 368
-                   && MemoryLayout<ShaderUniforms>.offset(of: \.portalHalfWidths) == 376,
-                   "Swift/Metal portal frames, drawable resolution, and half-width offsets must match.")
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.portalHalfWidths) == 376
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.visionFeatherPixels) == 384,
+                   "Swift/Metal portal frames, resolution, widths, and feathering offsets must match.")
     }
 
     static func checkPortalFrames() throws {
@@ -773,7 +775,7 @@ struct SmokeTests {
         }
         let pixels = try render(combined, device: device, queue: queue, width: 900, height: 600)
         try checkPixels(pixels, width: 900, height: 600, placements: squares,
-                        circlePlacements: circles, trianglePlacements: triangles)
+                        circlePlacements: circles, trianglePlacements: triangles, featheredTriangleIndices: [0])
         let plainView = MTKView(frame: .zero, device: device)
         plainView.drawableSize = .zero
         combined.draw(in: plainView)
@@ -1111,7 +1113,7 @@ struct SmokeTests {
         let pixels = try render(renderer, device: device, queue: queue, width: 512, height: 512)
         try checkPixels(pixels, width: 512, height: 512, placements: [],
                         circlePlacements: [circlePlacement, copiedPlacements[0]],
-                        trianglePlacements: [conePlacement, copiedPlacements[1]])
+                        trianglePlacements: [conePlacement, copiedPlacements[1]], featheredTriangleIndices: [0])
 
         let startup = try Renderer(view: view, library: library)
         let defaultPairs: [(SceneObjectID, SceneObjectID)] = [(.circle, .circleClone), (.cone, .coneClone)]
@@ -1396,7 +1398,8 @@ struct SmokeTests {
             let size = SIMD2<Float>(Float(viewport.width), Float(viewport.height))
             let side = min(size.x, size.y) - 2 * Float(SceneConfiguration.canvasPadding)
             let unitsPerPixel = 2 / side * max(size.x / Float(width), size.y / Float(height))
-            let tolerance = 1.5 * unitsPerPixel
+            let featherPixels = SceneConfiguration.visionEdgeSoftness * Float(width) / size.x
+            let tolerance = (clipped ? max(1.5, featherPixels * sqrt(2) + 1) : 1.5) * unitsPerPixel
             let tanHalfAngle: Float = 0.62
             var edgeCoverage = 0
             var portalRejections = 0
@@ -1438,6 +1441,133 @@ struct SmokeTests {
                        "Viewport extension must only affect the draw; stored placement scale must not accumulate.")
         }
         print("PASS: viewport-reaching vision, preserved field of view, rotated/offscreen eyes, Retina, portal aperture")
+    }
+
+    @MainActor
+    static func checkVisionFeathering(
+        view: MTKView, library: MTLLibrary, device: MTLDevice, queue: MTLCommandQueue
+    ) throws {
+        let clearRed = Float(SceneConfiguration.backgroundColor.red * 255)
+        func opacity(_ pixels: [UInt8], width: Int, x: Int, y: Int) -> Float {
+            (Float(pixels[(y * width + x) * 4 + 2]) - clearRed) / (255 - clearRed)
+        }
+        let cone = SceneObjectConfiguration(
+            id: .cone, geometry: .triangle,
+            placement: ObjectPlacement(position: [0, -0.5, 0.5]), color: [1, 1, 1, 1]
+        )
+        let renderer = try Renderer(view: view, library: library, sceneObjects: [cone])
+        let viewports: [(Int, Int, CGSize)] = [
+            (512, 512, CGSize(width: 512, height: 512)),
+            (1024, 1024, CGSize(width: 512, height: 512)),
+            (900, 600, CGSize(width: 900, height: 600)),
+            (1800, 1200, CGSize(width: 900, height: 600)),
+        ]
+        var partialEdge: (Int, Int)?
+        for (width, height, viewport) in viewports {
+            let pixels = try render(renderer, device: device, queue: queue, width: width, height: height, viewportSize: viewport)
+            let backingScale = Float(width) / Float(viewport.width)
+            let halfCanvas = Float(min(viewport.width, viewport.height) - 2 * SceneConfiguration.canvasPadding) / 2 * backingScale
+            let y = height / 2
+            let localY = (Float(height) / 2 - Float(y) - 0.5) / halfCanvas + 0.5
+            let edge = Float(width) / 2 + 0.5 * localY * halfCanvas
+            // At this horizontal scanline the side's pixel derivatives are 1 and 1/2.
+            let fadeWidth = SceneConfiguration.visionEdgeSoftness * backingScale * 1.5
+            var partialCount = 0
+            for x in Int(floor(edge - fadeWidth)) - 2...Int(ceil(edge)) + 2 {
+                let t = min(max((edge - Float(x) - 0.5) / fadeWidth, 0), 1)
+                let expected = t * t * (3 - 2 * t)
+                let actual = opacity(pixels, width: width, x: x, y: y)
+                try expect(abs(actual - expected) < 0.015,
+                           "Cone feathering must retain its point width after Retina scaling and viewport resize.")
+                if actual > 0.05 && actual < 0.95 { partialCount += 1 }
+                if width == 512 && actual > 0.2 && actual < 0.8 { partialEdge = (x, y) }
+            }
+            try expect(partialCount > 0 && opacity(pixels, width: width, x: width / 2, y: y) > 0.99
+                       && opacity(pixels, width: width, x: Int(edge) + 8, y: y) < 0.01,
+                       "Cone boundaries must fade while distant interior and exterior pixels remain unchanged.")
+        }
+
+        // Compare the two masks away from geometric cone edges, including rotated portals and Retina.
+        for (index, viewportCase) in viewports.enumerated() {
+            let (width, height, viewport) = viewportCase
+            let angle: Float = index < 2 ? 0 : 0.43
+            let right = SIMD2<Float>(cos(angle), sin(angle)), forward = SIMD2<Float>(-sin(angle), cos(angle))
+            let origin = SIMD2<Float>(-0.1, 0.1), eye = origin - forward * 0.6
+            let portal = SceneObjectConfiguration(
+                id: .topBar, geometry: .square,
+                placement: ObjectPlacement(position: [origin.x, origin.y, 0], scale: [0.4, 0.03, 1], angle: angle), color: .zero
+            )
+            var masks: [[UInt8]] = []
+            for id: SceneObjectID in [.cone, .coneClone] {
+                let vision = SceneObjectConfiguration(
+                    id: id, geometry: .triangle,
+                    placement: ObjectPlacement(position: [eye.x, eye.y, 0.5], scale: [2, 2, 1], angle: angle), color: [1, 1, 1, 1]
+                )
+                let maskRenderer = try Renderer(view: view, library: library, sceneObjects: [portal, vision])
+                masks.append(try render(maskRenderer, device: device, queue: queue, width: width, height: height, viewportSize: viewport))
+            }
+            let backingScale = Float(width) / Float(viewport.width)
+            let halfCanvas = Float(min(viewport.width, viewport.height) - 2 * SceneConfiguration.canvasPadding) / 2 * backingScale
+            func pixel(_ local: SIMD2<Float>) -> (Int, Int) {
+                let world = origin + right * local.x + forward * local.y
+                return (Int(Float(width) / 2 + world.x * halfCanvas), Int(Float(height) / 2 - world.y * halfCanvas))
+            }
+            let (edgeX, edgeY) = pixel([0.2 * 1.1 / 0.6, 0.5])
+            let radius = Int(ceil(SceneConfiguration.visionEdgeSoftness * backingScale * 3)) + 2
+            var partialCount = 0
+            for y in edgeY - radius...edgeY + radius {
+                for x in edgeX - radius...edgeX + radius {
+                    let original = opacity(masks[0], width: width, x: x, y: y)
+                    let clone = opacity(masks[1], width: width, x: x, y: y)
+                    try expect(abs(original + clone - 1) < 0.015,
+                               "Original and cloned vision must have complementary soft portal coverage.")
+                    if clone > 0.05 && clone < 0.95 { partialCount += 1 }
+                }
+            }
+            for (local, cloneCoverage): (SIMD2<Float>, Float) in [([0, 0.5], 1), ([0.5, 0.5], 0)] {
+                let (x, y) = pixel(local)
+                try expect(abs(opacity(masks[1], width: width, x: x, y: y) - cloneCoverage) < 0.01,
+                           "Portal feathering must preserve coverage far from the aperture boundary.")
+            }
+            try expect(partialCount > 0, "Portal boundaries must contain intermediate coverage.")
+        }
+
+        guard let (edgeX, edgeY) = partialEdge else { throw Failure(description: "No partial cone-edge pixel was found.") }
+        let backdrop = SceneObjectConfiguration(
+            id: .custom("feather-backdrop"), geometry: .square,
+            placement: ObjectPlacement(position: [0, 0, 0.8], scale: [2, 2, 1]), color: [0, 1, 0, 1]
+        )
+        var previous: [UInt8]?
+        for objects in [[cone, backdrop], [backdrop, cone]] {
+            let depthRenderer = try Renderer(view: view, library: library, sceneObjects: objects)
+            let pixels = try render(depthRenderer, device: device, queue: queue, width: 512, height: 512)
+            let index = (edgeY * 512 + edgeX) * 4
+            try expect(pixels[index + 1] == 255 && pixels[index + 2] > 10 && pixels[index + 2] < 245,
+                       "An alpha-1 vision edge must blend over the opaque backdrop without writing invisible depth.")
+            if let previous { try expect(pixels == previous, "Soft vision depth must be independent of scene order.") }
+            previous = pixels
+        }
+
+        if device.supportsTextureSampleCount(4) {
+            let multisampleView = MTKView(frame: .zero, device: device)
+            multisampleView.colorPixelFormat = view.colorPixelFormat
+            multisampleView.depthStencilPixelFormat = view.depthStencilPixelFormat
+            multisampleView.sampleCount = 4
+            let hardTriangle = SceneObjectConfiguration(
+                id: .custom("msaa-triangle"), geometry: .triangle,
+                placement: ObjectPlacement(position: [0, -0.5, 0.3], scale: [0.9, 1.1, 1], angle: 0.37), color: [1, 1, 1, 1]
+            )
+            for (targetView, samples) in [(view, 1), (multisampleView, 4)] {
+                let msaaRenderer = try Renderer(view: targetView, library: library, sceneObjects: [hardTriangle])
+                let pixels = try render(msaaRenderer, device: device, queue: queue, width: 512, height: 512, sampleCount: samples)
+                let partialCount = stride(from: 2, to: pixels.count, by: 4).filter {
+                    Float(pixels[$0]) > clearRed + 1 && pixels[$0] < 254
+                }.count
+                try expect(samples == 1 ? partialCount == 0 : partialCount > 20,
+                           "4x MSAA resolve must add geometric edge coverage without changing the hard 1x shader.")
+            }
+        }
+        print("PASS: soft cone/portal edges, complementary masks, Retina point widths, opaque backdrop visibility, 4x MSAA when supported")
     }
 
     static func checkMeshes(device: MTLDevice) throws {
@@ -1622,7 +1752,7 @@ struct SmokeTests {
 
     static func render(
         _ renderer: Renderer, device: MTLDevice, queue: MTLCommandQueue,
-        width: Int, height: Int, viewportSize: CGSize? = nil
+        width: Int, height: Int, viewportSize: CGSize? = nil, sampleCount: Int = 1
     ) throws -> [UInt8] {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false
@@ -1631,6 +1761,15 @@ struct SmokeTests {
         descriptor.storageMode = .private
         guard let color = device.makeTexture(descriptor: descriptor) else {
             throw Failure(description: "Could not allocate the color target.")
+        }
+        var multisampleColor: MTLTexture?
+        if sampleCount > 1 {
+            descriptor.textureType = .type2DMultisample
+            descriptor.sampleCount = sampleCount
+            guard let texture = device.makeTexture(descriptor: descriptor) else {
+                throw Failure(description: "Could not allocate the multisample color target.")
+            }
+            multisampleColor = texture
         }
         descriptor.pixelFormat = .depth32Float
         guard let depth = device.makeTexture(descriptor: descriptor) else {
@@ -1642,9 +1781,10 @@ struct SmokeTests {
             throw Failure(description: "Could not allocate the readback buffer or command buffer.")
         }
         let pass = MTLRenderPassDescriptor()
-        pass.colorAttachments[0].texture = color
+        pass.colorAttachments[0].texture = multisampleColor ?? color
+        pass.colorAttachments[0].resolveTexture = multisampleColor == nil ? nil : color
         pass.colorAttachments[0].loadAction = .clear
-        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].storeAction = multisampleColor == nil ? .store : .multisampleResolve
         pass.colorAttachments[0].clearColor = SceneConfiguration.backgroundColor
         pass.depthAttachment.texture = depth
         pass.depthAttachment.loadAction = .clear
@@ -1682,6 +1822,7 @@ struct SmokeTests {
     static func checkPixels(
         _ pixels: [UInt8], width: Int, height: Int, placements: [ObjectPlacement],
         circlePlacements: [ObjectPlacement] = [], trianglePlacements: [ObjectPlacement] = [],
+        featheredTriangleIndices: Set<Int> = [],
         viewportSize: CGSize? = nil
     ) throws {
         let color = SceneConfiguration.objectColor
@@ -1756,14 +1897,29 @@ struct SmokeTests {
             }
             return true
         }
+        let fadeInset = CGFloat(SceneConfiguration.visionEdgeSoftness) * pixelsPerPointX * sqrt(2) + 1
         for y in 0..<height {
             for x in 0..<width {
                 let index = y * width + x
                 let isForeground = matches(index, foreground)
                 let isBackground = matches(index, clear)
+                let pixelCenter = CGPoint(x: CGFloat(x) + 0.5, y: CGFloat(y) + 0.5)
+                // Only named vision triangles gain feathering. fwidth's L1 derivative
+                // spans at most sqrt(2) times the perpendicular edge distance.
+                let inFadeBand = featheredTriangleIndices.contains { index in
+                    triangleContains(pixelCenter, in: triangles[index], inset: -1)
+                        && !triangleContains(pixelCenter, in: triangles[index], inset: fadeInset)
+                }
+                if inFadeBand {
+                    let opacity = Float(Int(pixels[index * 4 + 2]) - clear[2]) / Float(foreground[2] - clear[2])
+                    try expect(opacity >= -0.01 && opacity <= 1.01 && (0..<4).allSatisfy { channel in
+                        let expected = Float(clear[channel]) + Float(foreground[channel] - clear[channel]) * opacity
+                        return abs(Float(pixels[index * 4 + channel]) - expected) <= 2
+                    }, "Vision edges must contain only the expected alpha blend at \(x),\(y).")
+                    continue
+                }
                 try expect(isForeground || isBackground,
                            "Unexpected shading or corrupted pixel at \(x),\(y).")
-                let pixelCenter = CGPoint(x: CGFloat(x) + 0.5, y: CGFloat(y) + 0.5)
                 // Allow one pixel for rasterization and the circle's polygonal
                 // boundary; check all other pixels, including the filled center.
                 if bounds.contains(where: { $0.insetBy(dx: 1, dy: 1).contains(pixelCenter) })

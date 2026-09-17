@@ -11,6 +11,11 @@ enum SceneConfiguration {
     static let cloneColor = SIMD4<Float>(94.0 / 255.0, 234.0 / 255.0, 212.0 / 255.0, 1)
     static let portalVisionColor = SIMD4<Float>(cloneColor.x, cloneColor.y, cloneColor.z, 0.16)
 
+    // Vision edge fade in macOS points; 0 restores hard cone and portal-shadow edges.
+    static let visionEdgeSoftness: Float = 1.5
+    // Smooth geometric outlines when the GPU supports this sample count.
+    static let antialiasingSampleCount = 4
+
     // Window/layout dimensions use macOS points, so padding looks consistent on Retina.
     static let canvasPadding: CGFloat = 100
     static let initialCanvasSide: CGFloat = 700

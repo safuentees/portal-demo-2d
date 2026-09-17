@@ -30,7 +30,7 @@ The project uses SwiftUI, AppKit, MetalKit, Model I/O, and SIMD. There are no ex
 
 | Change | File |
 | --- | --- |
-| Object positions, sizes, colors, field of view, movement and rotation speeds, and canvas padding | `Sources/Scene/SceneConfiguration.swift` |
+| Object positions, sizes, colors, field of view, edge softness, antialiasing, movement and rotation speeds, and canvas padding | `Sources/Scene/SceneConfiguration.swift` |
 | Object IDs and the initial data for each scene object | `Sources/Scene/SceneObjectConfiguration.swift` |
 | Position, scale, rotation angle, and model transform | `Sources/Scene/ObjectPlacement.swift` |
 | Portal frames, opening widths, movement crossings, and placement mapping | `Sources/Scene/Portal.swift` |
@@ -73,6 +73,15 @@ The `.cone` uses the flat triangle mesh. `TriangleMesh.make` flips its vertices 
 
 The original blue vision uses alpha `0.12`; the green clone uses `portalVisionColor` with alpha `0.16`. `playerColor` is a lighter opaque blue, and `cloneColor` is opaque green. Vision stays at depth `0.5` behind the solid circles and portal bars.
 
+Adjust edge smoothing in `SceneConfiguration`:
+
+```swift
+static let visionEdgeSoftness: Float = 1.5 // macOS points; 0 disables shader feathering.
+static let antialiasingSampleCount = 4    // Multisample antialiasing; 1 disables it.
+```
+
+Softness applies only to `.cone` and `.coneClone`, fading their triangle edges inward and softening the portal-shadow boundaries. The renderer converts points to drawable pixels, keeping the fade consistent on Retina displays. `MetalView` uses the requested sample count when the GPU supports it, otherwise it falls back to 1. These settings change rendering only; movement and portal traversal use the same geometry and math.
+
 With the camera at rest, `(0, 0)` is the center of an invisible square canvas, positive x goes right, and positive y goes up. Its edges are at `-1...1` on both axes. For the unit square mesh, scale `(1, 1, 1)` spans half the canvas width and height; `(0.5, 0.5, 1)` spans one quarter. Different x/y scales make rectangles. Object coordinates and proportions stay the same when the window changes shape.
 
 `SceneConfiguration.canvasPadding` sets the minimum space around the canvas, currently **100 macOS points on every side**. Points keep the visual spacing consistent on Retina displays (100 points corresponds to 200 backing pixels at 2x). The starting content size is **900 × 900 points**: the original 700-point canvas plus padding. macOS may restore an existing window's size; resize it or open a new window to use the new dimensions.
@@ -81,7 +90,7 @@ The canvas side is `max(min(windowWidth, windowHeight) - 2 * padding, 0)`. It st
 
 Keep `position.z = 0` and `scale.z = 1` for a simple flat layout. Depth does not change apparent size. For overlapping layers, smaller z values are closer; use values from 0 up to, but excluding, 1 with the current depth test. See [Apple's coordinate and viewport documentation](https://developer.apple.com/library/archive/documentation/Miscellaneous/Conceptual/MetalProgrammingGuide/Render-Ctx/Render-Ctx.html).
 
-`SceneConfiguration` supplies the initial RGBA colors, with separate values for the bars, player, vision, and clones. Visible fragments return their object's color; portal shaders discard fragments outside the selected visibility rule. The renderer owns the live `RenderObject` values after setup.
+`SceneConfiguration` supplies the initial RGBA colors, with separate values for the bars, player, vision, and clones. Visible fragments use their object's color, with edge coverage adjusting the vision's alpha; hard clipping discards fragments outside the selected visibility rule. The renderer owns the live `RenderObject` values after setup.
 
 ## Access an object during a frame
 
@@ -137,7 +146,9 @@ Positions use homogeneous `w = 1`; directions use `w = 0` so translation cannot 
 
 `movePlayer` makes that crossing decision once using the circle's center, with the cone as a fallback when the circle is absent. It applies the same directed mapping to both proposed placements. Their sizes stay unchanged, and each object's original z is restored because z controls rendering layers in this flat scene. `exitClearanceOffset` adds one shared, tiny offset only when the mapped center is within `0.00001` units of the exit plane. It places the center on the side of the mapped motion to prevent rounding from producing another crossing; it does not add a cooldown or change ordinary movement past the opening.
 
-The shader's `intersectsPortal` checks whether the segment from an object's center to a fragment crosses a finite opening. `intersectsEitherPortal` combines the two opening tests. Original `.circle` and `.cone` fragments disappear when that result is true; `.circleClone` and `.coneClone` fragments appear when it is true. Other IDs use the ordinary color pipeline. Opening half-widths come from the bars' current x scales; missing or zero-width openings are disabled rather than replaced with an opening at the origin.
+The shader's `intersectsPortal` checks whether the segment from an object's center to a fragment crosses a finite opening. `intersectsEitherPortal` combines the two opening tests. This hard test remains in use for circles and when vision softness is zero: originals disappear where the test succeeds, and clones appear there. Other IDs use the ordinary color pipeline. Opening half-widths come from the bars' current x scales; missing or zero-width openings are disabled rather than replaced with an opening at the origin.
+
+For softened vision, signed margins describe the region beyond the portal plane and between rays through the two opening ends. `fwidth` measures their change across a pixel, and centered `smoothstep` transitions produce partial coverage near the boundaries. Taking the maximum coverage from either portal forms their union. The original vision uses `1 - coverage`; its clone uses `coverage`. A separate inward fade softens the triangle's own edges without expanding its geometry.
 
 The current equal-width bars face 180 degrees apart, making this particular transfer its own inverse. That lets the single mapped clone serve either opening in this arrangement. Traversal selects either directed pair, but general two-way cloned views with independently rotated portals still need separate mappings. Recursive portal views are not implemented. Circle ray clipping remains experimental; center-based traversal does not test whether the whole body fits through an opening or collides with its edges. At most one crossing is processed per movement update.
 
@@ -209,14 +220,15 @@ The tracking area follows the visible view bounds, and resizing or reactivating 
 - `MetalView` owns a coordinator that retains the renderer while `MTKView` holds its weak delegate.
 - The 60 fps loop supports smooth held-key object movement using elapsed time, normalized diagonals, and clamped debugger pauses. The camera is stationary; the `Camera` movement helper remains available for experiments.
 - The mesh and render/depth states are created once. Each frame encodes the draw, presents the drawable, and commits the command buffer.
+- `MetalView` requests 4× multisample antialiasing by default, with a single-sample fallback on unsupported GPUs. The pipelines use the view's selected sample count.
 - Three pipelines share `object_vertex`: `object_fragment` supplies ordinary color, `portal_fragment` clips originals, and `portal_clone_fragment` clips mapped copies. The renderer selects a pipeline for every object; selecting one does not permanently attach a shader to its mesh.
 - Squares, circles, and the cone triangle share `Mesh2D`'s vertex format: one `float2` position at attribute 0, in buffer 0, with an 8-byte stride. The pipeline uses this shared descriptor; each draw supplies its object's own vertex and index buffers. Different shapes and vertex counts can share a pipeline because their data layout matches.
 - All active mesh types draw indexed triangles. The optional sphere uses a different layout (position, normal, UV, 32-byte stride); adding it to this renderer requires adapting its layout or using a matching pipeline.
-- Depth uses `.depth32Float`, clears to 1, and compares with `.less`. Opaque objects draw first and write depth. Translucent objects draw back to front with depth writes disabled, so the vision does not hide solid player or portal markers in front of it. Straight-alpha blending combines source color with the existing background; shader alpha alone would not enable transparency.
+- Depth uses `.depth32Float`, clears to 1, and compares with `.less`. Opaque objects draw first and write depth. Translucent objects draw back to front with depth writes disabled, so the vision does not hide solid player or portal markers in front of it. With softness enabled, the cone and its clone use this translucent path even with base alpha 1, because their edge coverage can still be partial. Straight-alpha blending combines source color with the existing background; shader alpha alone would not enable transparency.
 - The canvas transform scales only x/y to fit a centered, padded square. Depth and homogeneous w stay unchanged: there is no perspective or depth-dependent shrinking.
 - Matrix conventions match `metsl`: **row vectors, +Z forward**. Each object's model matrix is `scale * rotation * translation`, so resizing and rotating preserve its positioned local origin. The shader uses `position * model * view * canvas`.
 - The canvas matrix is calculated once per frame using the view's point size, so moving between Retina and non-Retina displays preserves padding. A separate perspective helper remains available for experiments; the renderer does not call it.
-- Mesh attributes use buffer 0. Uniforms use buffer 1 in both shader stages. Besides model/view/canvas matrices and color, they carry `worldToEntrance`/`eyeInEntrance`, `worldToExit`/`eyeInExit`, `resolution`, and `portalHalfWidths`. Eyes and interpolated fragment positions are compared in the same portal-local frame. `resolution` is the full drawable size in pixels, including Retina scaling. Keep `ShaderUniforms.swift` and the Metal struct's field order/types synchronized.
+- Mesh attributes use buffer 0. Uniforms use buffer 1 in both shader stages. Besides model/view/canvas matrices and color, they carry `worldToEntrance`/`eyeInEntrance`, `worldToExit`/`eyeInExit`, `resolution`, `portalHalfWidths`, and `visionFeatherPixels`. Eyes and interpolated fragment positions are compared in the same portal-local frame. `resolution` is the full drawable size in pixels, including Retina scaling; `visionFeatherPixels` supplies the converted edge softness. Keep `ShaderUniforms.swift` and the Metal struct's field order/types synchronized.
 - Xcode compiles `Shaders.metal` as a source into `default.metallib`; the renderer loads it with `makeDefaultLibrary()`.
 
 ## Verify
@@ -225,7 +237,7 @@ The tracking area follows the visible view bounds, and resizing or reactivating 
 ./Scripts/check.sh
 ```
 
-This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover named-object lookup and updates, duplicate ID rejection, WASD and Q/E key state and focus cleanup, synchronized XY movement and timing, held-key rotation and cancellation, heading preservation during mouse input, scale/rotation/translation order, placement changes, square canvas fitting and padding, mouse-coordinate conversion and event callbacks, unchanged depth, camera math, Swift/Metal uniform layout, circle and triangle geometry, translated and rotated triangle rendering, alpha blending and depth ordering, mixed square/circle rendering, portal mapping and aperture tests, center crossings and mapped movement/headings, held movement through portals and restored controls on return, viewport-reaching vision, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
+This builds the Debug app and runs the actual renderer on the GPU with Metal API validation enabled. Checks cover named-object lookup and updates, duplicate ID rejection, WASD and Q/E key state and focus cleanup, synchronized XY movement and timing, held-key rotation and cancellation, heading preservation during mouse input, scale/rotation/translation order, placement changes, square canvas fitting and padding, mouse-coordinate conversion and event callbacks, unchanged depth, camera math, Swift/Metal uniform layout, circle and triangle geometry, translated and rotated triangle rendering, alpha blending and depth ordering, vision and portal-edge feathering, multisample rendering, mixed square/circle rendering, portal mapping and aperture tests, center crossings and mapped movement/headings, held movement through portals and restored controls on return, viewport-reaching vision, empty/tiny scenes, stable resting frames, square/wide/tall drawable sizes, and 2x Retina rendering. Render checks use fixed placements so you can freely edit the scene layout. Build products stay in `MetslStarter-build` under your macOS temporary directory. This avoids signing problems caused by File Provider metadata on synced Desktop/Documents folders. Override the location with `BUILD_DIR` if desired. Running from Xcode uses its normal DerivedData location.
 
 To build Release:
 

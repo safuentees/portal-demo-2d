@@ -1,7 +1,7 @@
 import simd
 
 /// Keep this layout identical to ShaderUniforms in Shaders.metal.
-/// 384 bytes with 16-byte alignment.
+/// 400-byte stride with 16-byte alignment.
 struct ShaderUniforms {
     var modelMatrix: simd_float4x4
     var viewMatrix: simd_float4x4
@@ -15,4 +15,6 @@ struct ShaderUniforms {
     var resolution = SIMD2<Float>(repeating: 1)
     /// x = entrance, y = exit; zero disables a missing or closed opening.
     var portalHalfWidths = SIMD2<Float>.zero
+    /// Edge fade in drawable pixels; zero keeps the original hard visibility test.
+    var visionFeatherPixels: Float = 0
 }

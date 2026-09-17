@@ -318,6 +318,15 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
     }
 
+    private func hasSoftVisionEdges(_ object: RenderObject) -> Bool {
+        SceneConfiguration.visionEdgeSoftness > 0 && (object.id == .cone || object.id == .coneClone)
+    }
+
+    private func isTranslucent(_ object: RenderObject) -> Bool {
+        // Feathered edges have partial alpha even when the object's base color is opaque.
+        object.color.w < 1 || hasSoftVisionEdges(object)
+    }
+
     /// Viewport extension changes only the draw, not the object's stored placement.
     private func drawPlacement(for object: RenderObject, viewportSize: SIMD2<Float>) -> ObjectPlacement {
         var placement = object.placement
@@ -365,15 +374,18 @@ final class Renderer: NSObject, MTKViewDelegate {
         let portalHalfWidths = SIMD2<Float>(entrance?.halfWidth ?? 0, exit?.halfWidth ?? 0)
         let viewportDimensions = SIMD2<Float>(Float(size.width), Float(size.height))
         let resolution = SIMD2<Float>(Float(drawableSize.width), Float(drawableSize.height))
+        // Derivatives in the shader measure drawable pixels; settings use view points.
+        let featherPixels = max(SceneConfiguration.visionEdgeSoftness, 0)
+            * resolution.x / max(viewportDimensions.x, 1)
 
         // Solid objects establish depth first. Blend translucent fields back to front.
-        let opaqueObjects = objects.filter { $0.color.w >= 1 }
-        let translucentObjects = objects.filter { $0.color.w < 1 }.sorted {
+        let opaqueObjects = objects.filter { !isTranslucent($0) }
+        let translucentObjects = objects.filter { isTranslucent($0) }.sorted {
             $0.placement.position.z > $1.placement.position.z
         }
         for object in opaqueObjects + translucentObjects {
             encoder.setRenderPipelineState(pipeline(for: object.id))
-            encoder.setDepthStencilState(object.color.w >= 1 ? depthState : translucentDepthState)
+            encoder.setDepthStencilState(isTranslucent(object) ? translucentDepthState : depthState)
             // 1. Select this object's geometry.
             let vertexBuffer = object.mesh.vertexBuffers[0]
 
@@ -396,7 +408,8 @@ final class Renderer: NSObject, MTKViewDelegate {
                 worldToExit: worldToExit,
                 eyeInExit: eye * worldToExit,
                 resolution: resolution,
-                portalHalfWidths: portalHalfWidths
+                portalHalfWidths: portalHalfWidths,
+                visionFeatherPixels: hasSoftVisionEdges(object) ? featherPixels : 0
             )
 
             encoder.setVertexBytes(

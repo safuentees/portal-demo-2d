@@ -18,6 +18,8 @@ struct MetalView: NSViewRepresentable {
         let view = KeyboardMetalView(frame: .zero, device: device)
         view.colorPixelFormat = .bgra8Unorm
         view.depthStencilPixelFormat = .depth32Float
+        let samples = SceneConfiguration.antialiasingSampleCount
+        view.sampleCount = device.supportsTextureSampleCount(samples) ? samples : 1
         view.clearColor = SceneConfiguration.backgroundColor
         view.clearDepth = 1
         view.preferredFramesPerSecond = 60
