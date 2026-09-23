@@ -10,7 +10,16 @@ struct MetslStarterApp: App {
                     minHeight: SceneConfiguration.minimumCanvasSide + 2 * SceneConfiguration.canvasPadding
                 )
                 .overlay(alignment: .bottom) {
-                    controlsHint
+                    VStack(spacing: 0) {
+                        controlsHint
+                        Rectangle()
+                            .fill(.black.opacity(1))
+                            .frame(height: 44) // example height
+                    }
+                    .overlay(
+                        Rectangle()
+                            .stroke(Color.red, lineWidth: 2)
+                    )
                 }
         }
         .defaultSize(
@@ -39,3 +48,4 @@ struct MetslStarterApp: App {
         .accessibilityElement(children: .combine)
     }
 }
+
