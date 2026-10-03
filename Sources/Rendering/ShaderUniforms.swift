@@ -17,4 +17,6 @@ struct ShaderUniforms {
     var portalHalfWidths = SIMD2<Float>.zero
     /// Edge fade in drawable pixels; zero keeps the original hard visibility test.
     var visionFeatherPixels: Float = 0
+    /// Normalize custom cone vertices to the unit triangle for edge feathering.
+    var coneSize = SIMD2<Float>(repeating: 1)
 }

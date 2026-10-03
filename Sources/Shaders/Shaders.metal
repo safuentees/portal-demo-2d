@@ -24,6 +24,7 @@ struct ShaderUniforms {
     float2 resolution;
     float2 portalHalfWidths;
     float visionFeatherPixels;
+    float2 coneSize;
 };
 
 vertex VertexOut object_vertex(
@@ -38,7 +39,7 @@ vertex VertexOut object_vertex(
         * uniforms.viewMatrix
         * uniforms.canvasMatrix;
     out.worldPosition = world.xy;
-    out.localPosition = input.position;
+    out.localPosition = input.position / uniforms.coneSize;
 
     return out;
 }

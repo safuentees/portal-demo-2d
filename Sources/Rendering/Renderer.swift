@@ -86,6 +86,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             case .square: mesh = squareMesh
             case .circle: mesh = circleMesh
             case .triangle: mesh = triangleMesh
+            default: mesh = triangleMesh
             }
 
             return RenderObject(

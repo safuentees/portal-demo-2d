@@ -26,8 +26,8 @@ enum SceneConfiguration {
     static let circleScale: Float = 0.05
     // Radians: preserve the existing opening angle (about 64 degrees).
     static let visionFieldOfView: Float = 2 * atan(0.62)
-    // Unit forward reach. Rendering extends both axes together to cover the window.
-    static let visionScale = SIMD3<Float>(2 * tan(visionFieldOfView / 2), 1, 1)
+    // Local forward reach. Viewport extension can lengthen this at draw time.
+    static let visionLength: Float = 1
 
     // Radians per second while holding Q or E (180 degrees per second).
     static let objectRotationSpeed: Float = .pi
@@ -70,11 +70,10 @@ enum SceneConfiguration {
         ),
         SceneObjectConfiguration(
             id: .cone,
-            geometry: .triangle,
+            geometry: .cone(fieldOfView: visionFieldOfView, length: visionLength),
             placement: ObjectPlacement(
                 // Depth only controls layering: the translucent field sits behind solid markers.
-                position: SIMD3(0, 0, 0.5),
-                scale: visionScale
+                position: SIMD3(0, 0, 0.5)
             ),
             color: visionColor,
             extendsVisionToViewport: true

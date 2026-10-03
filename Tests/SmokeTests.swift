@@ -91,6 +91,8 @@ struct SmokeTests {
         view.depthStencilPixelFormat = .depth32Float
         try checkObjectPlacement(device: device)
         try checkMeshes(device: device)
+        try checkConeMeshes(device: device)
+        try checkCustomCones(view: view, library: library, device: device, queue: queue)
         try checkNamedObjects(view: view, library: library)
         try checkCloning(view: view, library: library, device: device, queue: queue)
         try checkResolutionUniform(view: view, device: device, queue: queue)
@@ -200,10 +202,10 @@ struct SmokeTests {
         paused.update(direction: [0, 0, 1], deltaTime: 100)
         try expect(abs(paused.position.z - SceneConfiguration.cameraSpeed * 0.1) < 0.0001,
                    "A debugger pause must not cause a camera jump.")
-        try expect(MemoryLayout<ShaderUniforms>.size == 388
+        try expect(MemoryLayout<ShaderUniforms>.size == 400
                    && MemoryLayout<ShaderUniforms>.stride == 400
                    && MemoryLayout<ShaderUniforms>.alignment == 16,
-                   "Swift/Metal uniforms must include vision feathering with a 400-byte aligned stride.")
+                   "Swift/Metal uniforms must include cone dimensions with a 400-byte aligned stride.")
         try expect(MemoryLayout<ShaderUniforms>.offset(of: \.canvasMatrix) == 128,
                    "Swift/Metal uniform canvas matrix offset changed.")
         try expect(MemoryLayout<ShaderUniforms>.offset(of: \.color) == 192,
@@ -214,8 +216,9 @@ struct SmokeTests {
                    && MemoryLayout<ShaderUniforms>.offset(of: \.eyeInExit) == 352
                    && MemoryLayout<ShaderUniforms>.offset(of: \.resolution) == 368
                    && MemoryLayout<ShaderUniforms>.offset(of: \.portalHalfWidths) == 376
-                   && MemoryLayout<ShaderUniforms>.offset(of: \.visionFeatherPixels) == 384,
-                   "Swift/Metal portal frames, resolution, widths, and feathering offsets must match.")
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.visionFeatherPixels) == 384
+                   && MemoryLayout<ShaderUniforms>.offset(of: \.coneSize) == 392,
+                   "Swift/Metal portal frames, resolution, widths, feathering, and cone dimension offsets must match.")
     }
 
     static func checkPortalFrames() throws {
@@ -380,19 +383,22 @@ struct SmokeTests {
         let base = SIMD3<Float>(0.62, 0.5, 2)
         let size = SIMD2<Float>(900, 600)
         let halfExtent = size / 400 // A 600-point short side minus 100 points on each side.
-        for eye: SIMD2<Float> in [[0, 0], [5, -2], [-3, 4]] {
-            for angle: Float in [0, 0.83, .pi / 2, -.pi / 2] {
-                let scale = Transforms.visionScaleToCoverViewport(
-                    scale: base, eyePosition: eye, angle: angle, viewportSize: size, padding: 100
-                )
-                try expect(scale.y >= base.y && scale.z == base.z
-                           && abs(scale.x / scale.y - base.x / base.y) < 0.0001,
-                           "Vision extension must preserve its opening angle and depth without shrinking its base scale.")
-                let forward = SIMD2<Float>(-sin(angle), cos(angle))
-                for x in [-halfExtent.x, halfExtent.x] {
-                    for y in [-halfExtent.y, halfExtent.y] {
-                        try expect(scale.y > simd_dot(SIMD2(x, y) - eye, forward),
-                                   "The vision far edge must lie beyond every viewport corner, including padding.")
+        for localLength: Float in [0.25, 1, 3] {
+            for eye: SIMD2<Float> in [[0, 0], [5, -2], [-3, 4]] {
+                for angle: Float in [0, 0.83, .pi / 2, -.pi / 2] {
+                    let scale = Transforms.visionScaleToCoverViewport(
+                        scale: base, localLength: localLength, eyePosition: eye, angle: angle,
+                        viewportSize: size, padding: 100
+                    )
+                    try expect(scale.y >= base.y && scale.z == base.z
+                               && abs(scale.x / scale.y - base.x / base.y) < 0.0001,
+                               "Vision extension must preserve its opening angle and depth without shrinking its base scale.")
+                    let forward = SIMD2<Float>(-sin(angle), cos(angle))
+                    for x in [-halfExtent.x, halfExtent.x] {
+                        for y in [-halfExtent.y, halfExtent.y] {
+                            try expect(scale.y * localLength > simd_dot(SIMD2(x, y) - eye, forward),
+                                       "The vision far edge must lie beyond every viewport corner for any mesh length.")
+                        }
                     }
                 }
             }
@@ -402,9 +408,12 @@ struct SmokeTests {
                 scale: base, eyePosition: .zero, angle: 0, viewportSize: size, padding: 100
             ) == base, "Collapsed viewports must leave the stored vision shape finite and unchanged.")
         }
-        try expect(abs(SceneConfiguration.visionScale.x / (2 * SceneConfiguration.visionScale.y)
-                       - tan(SceneConfiguration.visionFieldOfView / 2)) < 0.0001,
-                   "The configured triangle shape must match the configured field of view.")
+        let dimensions = try ConeMesh.dimensions(
+            fieldOfView: SceneConfiguration.visionFieldOfView, length: SceneConfiguration.visionLength
+        )
+        try expect(dimensions.y == SceneConfiguration.visionLength
+                   && abs(2 * atan(dimensions.x / (2 * dimensions.y)) - SceneConfiguration.visionFieldOfView) < 0.0001,
+                   "The configured cone dimensions must match its field of view and forward length.")
     }
 
     static func checkObjectPlacement(device: MTLDevice) throws {
@@ -816,6 +825,10 @@ struct SmokeTests {
             case .square: squares.append(placement)
             case .circle: circles.append(placement)
             case .triangle: triangles.append(placement)
+            case .cone(let fieldOfView, let length):
+                let dimensions = try ConeMesh.dimensions(fieldOfView: fieldOfView, length: length)
+                placement.scale *= SIMD3(dimensions.x, dimensions.y, 1)
+                triangles.append(placement)
             }
         }
         let pixels = try render(combined, device: device, queue: queue, width: 900, height: 600)
@@ -1155,6 +1168,7 @@ struct SmokeTests {
                        && clone.placement.position == source.placement.position
                        && clone.placement.scale == source.placement.scale
                        && clone.placement.angle == source.placement.angle && clone.color == source.color
+                       && clone.coneSize == source.coneSize
                        && clone.extendsVisionToViewport == source.extendsVisionToViewport,
                        "A clone must share the exact GPU mesh and copy every editable scene property.")
             var displaced = source.placement
@@ -1205,6 +1219,7 @@ struct SmokeTests {
                        && clone.placement.position == source.placement.position
                        && clone.placement.scale == source.placement.scale
                        && clone.placement.angle == source.placement.angle
+                       && clone.coneSize == source.coneSize
                        && clone.extendsVisionToViewport == source.extendsVisionToViewport
                        && clone.color == (cloneID == .coneClone ? SceneConfiguration.portalVisionColor : SceneConfiguration.cloneColor),
                        "Default clones must copy source placement and retain their distinct teal appearance.")
@@ -1680,17 +1695,17 @@ struct SmokeTests {
         try expect(triangleVertices[0] == SIMD2<Float>(0, 0)
                    && triangleVertices[1] == SIMD2<Float>(-0.5, 1)
                    && triangleVertices[2] == SIMD2<Float>(0.5, 1),
-                   "The baked half-turn must place the tip below the flat edge without moving the triangle's footprint.")
+                   "The triangle must place its tip at the origin and its flat edge at local y = 1.")
         let lower = simd_min(triangleVertices[0], simd_min(triangleVertices[1], triangleVertices[2]))
         let upper = simd_max(triangleVertices[0], simd_max(triangleVertices[1], triangleVertices[2]))
         try expect(lower == SIMD2<Float>(-0.5, 0) && upper == SIMD2<Float>(0.5, 1)
                    && (lower + upper) / 2 == SIMD2<Float>(0, 0.5),
-                   "The flipped mesh must preserve its original bounds and bounds center.")
+                   "The unit triangle must retain its documented bounds and bounds center.")
         let edgeA = triangleVertices[1] - triangleVertices[0]
         let edgeB = triangleVertices[2] - triangleVertices[0]
         try expect(triangleIndices[0] == 0 && triangleIndices[1] == 1 && triangleIndices[2] == 2
                    && edgeA.x * edgeB.y - edgeA.y * edgeB.x < 0,
-                   "The baked flip must retain the original indices and clockwise winding.")
+                   "The triangle must use its three vertices with clockwise winding.")
         guard circle.vertexCount == 11, circle.submeshes.count == 1,
               let vertices = circle.vertexBuffers.first, let triangles = circle.submeshes.first else {
             throw Failure(description: "A ten-segment circle must have one center, ten rim vertices, and one submesh.")

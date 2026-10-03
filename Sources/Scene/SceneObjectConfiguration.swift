@@ -11,12 +11,14 @@ enum SceneObjectID: Hashable {
     case custom(String)
 }
 
-/// Initial scene data. The renderer supplies the shared GPU mesh for each geometry.
+/// Initial scene data. Matching geometry parameters share a GPU mesh.
 struct SceneObjectConfiguration {
-    enum Geometry {
+    enum Geometry: Hashable {
         case square
         case circle
         case triangle
+        /// Full opening angle in radians and forward length before placement scaling.
+        case cone(fieldOfView: Float, length: Float = 1)
     }
 
     let id: SceneObjectID
