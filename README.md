@@ -1,4 +1,4 @@
-# Metsl Starter
+# Portal Demo 2D
 
 A ready-to-run macOS Metal project based on `metsl-macOS`, with a circular player, a translucent field of view, and two portal bars. Crossing an opening with the player's center transfers the player and its view through the portal pair. Mapped clones and fragment clipping show the portal view. Full-body collision handling is not implemented. The window, keyboard controls, GPU setup, and shaders are wired together; sphere geometry is also available for experiments.
 
@@ -9,8 +9,8 @@ Current release: **v1.0.0** (app version 1.0.0, build 1). See `CHANGELOG.md` for
 Clone the private repository while signed in with GitHub CLI:
 
 ```sh
-gh repo clone safuentees/metsl-starter
-cd metsl-starter
+gh repo clone safuentees/portal-demo-2d
+cd portal-demo-2d
 open MetslStarter.xcodeproj
 ```
 
