@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Rewrite the README with clear Xcode setup, controls, a crossing walkthrough, three captured Metal scene images, and current implementation limits.
+- Preserve detailed implementation notes in `Docs/RenderingGuide.md` and correct stale descriptions of triangle geometry and cone parameter handling.
+
 ## 1.0.0 — 2026-09-15
 
 Initial reusable macOS Metal starter, based on metsl-macOS.
